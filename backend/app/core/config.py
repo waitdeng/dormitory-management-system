@@ -24,8 +24,11 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = Field(default="/api/v1")
     DEBUG: bool = Field(default=False)
     LOG_LEVEL: str = Field(default="INFO")
-    # When False and APP_ENV=production, /api/docs and /api/openapi.json are hidden.
-    ENABLE_API_DOCS: bool = Field(default=True)
+    # Interactive docs (/api/docs, /api/openapi.json).
+    # Default False so production deployments do not expose docs accidentally.
+    # Non-production APP_ENV still enables docs regardless of this flag
+    # (see main.create_app). Set ENABLE_API_DOCS=true to opt-in on production.
+    ENABLE_API_DOCS: bool = Field(default=False)
 
     MYSQL_HOST: str = Field(default="127.0.0.1")
     MYSQL_PORT: int = Field(default=3306)

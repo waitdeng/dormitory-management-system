@@ -632,127 +632,136 @@ async def preview_employee_import(
     except Exception as exc:  # noqa: BLE001 - surface as validation error
         raise ValidationError(f"Cannot parse workbook: {exc}") from exc
 
-    ws = wb.active
-    rows_iter = ws.iter_rows(values_only=True)
     try:
-        header = next(rows_iter)
-    except StopIteration:
-        raise ValidationError("Workbook has no rows") from None
-
-    header_map: dict[str, int] = {}
-    for idx, cell in enumerate(header):
-        if cell is None:
-            continue
-        label = str(cell).strip()
-        for key, col_label, _required in IMPORT_COLUMNS:
-            if label == col_label or label == key:
-                header_map[key] = idx
-    missing = [
-        label
-        for key, label, required in IMPORT_COLUMNS
-        if required and key not in header_map
-    ]
-    if missing:
-        raise ValidationError(f"Missing required columns: {', '.join(missing)}")
-
-    dept_by_code: dict[str, Department] = {
-        d.department_code: d for d in (await db.execute(select(Department))).scalars()
-    }
-
-    raw_rows: list[dict] = []
-    seen_nos: set[str] = set()
-    row_no = 1
-    for values in rows_iter:
-        row_no += 1
-        if values is None or all(v is None or str(v).strip() == "" for v in values):
-            continue
-        if row_no > 2000 + 1:
-            raise ValidationError("Import supports at most 2000 data rows")
-
-        def cell(key: str, row_values: tuple = values) -> Any:
-            idx = header_map.get(key)
-            if idx is None or idx >= len(row_values):
-                return None
-            return row_values[idx]
-
-        result: dict[str, Any] = {
-            "row_no": row_no,
-            "action": "error",
-            "employee_no": None,
-            "full_name": None,
-            "message": None,
-            "data": None,
-        }
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
         try:
-            employee_no = str(cell("employee_no") or "").strip()
-            full_name = str(cell("full_name") or "").strip()
-            if not employee_no:
-                raise ValueError("employee_no is required")
-            if not full_name:
-                raise ValueError("full_name is required")
-            if employee_no in seen_nos:
-                raise ValueError(f"duplicate employee_no '{employee_no}' in file")
-            seen_nos.add(employee_no)
+            header = next(rows_iter)
+        except StopIteration:
+            raise ValidationError("Workbook has no rows") from None
 
-            gender = _map_enum(cell("gender"), _GENDER_MAP, "gender")
-            employment_type = _map_enum(cell("employment_type"), _EMP_TYPE_MAP, "employment_type")
-            shift_type = _map_enum(cell("shift_type"), _SHIFT_MAP, "shift_type")
-            join_date = _parse_date(cell("join_date"))
-            phone = cell("phone")
-            phone_text = str(phone).strip() if phone is not None and str(phone).strip() else None
-            if phone_text and not re.fullmatch(r"[0-9+\-\s]{5,32}", phone_text):
-                raise ValueError(f"invalid phone '{phone_text}'")
-            department_code = (
-                str(cell("department_code")).strip()
-                if cell("department_code") is not None and str(cell("department_code")).strip()
-                else None
-            )
-            department_id = None
-            if department_code:
-                dept = dept_by_code.get(department_code)
-                if dept is None:
-                    raise ValueError(f"unknown department_code '{department_code}'")
-                department_id = dept.id
+        header_map: dict[str, int] = {}
+        for idx, cell in enumerate(header):
+            if cell is None:
+                continue
+            label = str(cell).strip()
+            for key, col_label, _required in IMPORT_COLUMNS:
+                if label == col_label or label == key:
+                    header_map[key] = idx
+        missing = [
+            label
+            for key, label, required in IMPORT_COLUMNS
+            if required and key not in header_map
+        ]
+        if missing:
+            raise ValidationError(f"Missing required columns: {', '.join(missing)}")
 
-            accommodation_required = _parse_bool(cell("accommodation_required"))
-            position = cell("position")
-            position_text = (
-                str(position).strip() if position is not None and str(position).strip() else None
-            )
+        dept_by_code: dict[str, Department] = {
+            d.department_code: d for d in (await db.execute(select(Department))).scalars()
+        }
 
-            data = {
-                "employee_no": _sanitize_import_text(employee_no),
-                "full_name": _sanitize_import_text(full_name),
-                "gender": gender,
-                "department_id": department_id,
-                "department_code": department_code,
-                "position": _sanitize_import_text(position_text),
-                "employment_type": employment_type,
-                "phone": _sanitize_import_text(phone_text),
-                "join_date": join_date.isoformat() if join_date else None,
-                "accommodation_required": accommodation_required,
-                "shift_type": shift_type,
+        raw_rows: list[dict] = []
+        seen_nos: set[str] = set()
+        row_no = 1
+        for values in rows_iter:
+            row_no += 1
+            if values is None or all(v is None or str(v).strip() == "" for v in values):
+                continue
+            if row_no > 2000 + 1:
+                raise ValidationError("Import supports at most 2000 data rows")
+
+            def cell(key: str, row_values: tuple = values) -> Any:
+                idx = header_map.get(key)
+                if idx is None or idx >= len(row_values):
+                    return None
+                return row_values[idx]
+
+            result: dict[str, Any] = {
+                "row_no": row_no,
+                "action": "error",
+                "employee_no": None,
+                "full_name": None,
+                "message": None,
+                "data": None,
             }
-            result["employee_no"] = employee_no
-            result["full_name"] = full_name
-            result["data"] = data
+            try:
+                employee_no = str(cell("employee_no") or "").strip()
+                full_name = str(cell("full_name") or "").strip()
+                if not employee_no:
+                    raise ValueError("employee_no is required")
+                if not full_name:
+                    raise ValueError("full_name is required")
+                if employee_no in seen_nos:
+                    raise ValueError(f"duplicate employee_no '{employee_no}' in file")
+                seen_nos.add(employee_no)
 
-            existing = (
-                await db.execute(select(Employee).where(Employee.employee_no == employee_no))
-            ).scalar_one_or_none()
-            if existing is not None:
-                result["action"] = "update"
-                result["message"] = "employee_no exists, will update"
-            else:
-                result["action"] = "create"
-                result["message"] = "new employee"
-        except Exception as exc:  # noqa: BLE001 - collect per-row errors
-            result["action"] = "error"
-            result["message"] = str(exc)
+                gender = _map_enum(cell("gender"), _GENDER_MAP, "gender")
+                employment_type = _map_enum(
+                    cell("employment_type"), _EMP_TYPE_MAP, "employment_type"
+                )
+                shift_type = _map_enum(cell("shift_type"), _SHIFT_MAP, "shift_type")
+                join_date = _parse_date(cell("join_date"))
+                phone = cell("phone")
+                phone_text = (
+                    str(phone).strip() if phone is not None and str(phone).strip() else None
+                )
+                if phone_text and not re.fullmatch(r"[0-9+\-\s]{5,32}", phone_text):
+                    raise ValueError(f"invalid phone '{phone_text}'")
+                department_code = (
+                    str(cell("department_code")).strip()
+                    if cell("department_code") is not None and str(cell("department_code")).strip()
+                    else None
+                )
+                department_id = None
+                if department_code:
+                    dept = dept_by_code.get(department_code)
+                    if dept is None:
+                        raise ValueError(f"unknown department_code '{department_code}'")
+                    department_id = dept.id
 
-        raw_rows.append(result)
+                accommodation_required = _parse_bool(cell("accommodation_required"))
+                position = cell("position")
+                position_text = (
+                    str(position).strip()
+                    if position is not None and str(position).strip()
+                    else None
+                )
 
-    wb.close()
+                data = {
+                    "employee_no": _sanitize_import_text(employee_no),
+                    "full_name": _sanitize_import_text(full_name),
+                    "gender": gender,
+                    "department_id": department_id,
+                    "department_code": department_code,
+                    "position": _sanitize_import_text(position_text),
+                    "employment_type": employment_type,
+                    "phone": _sanitize_import_text(phone_text),
+                    "join_date": join_date.isoformat() if join_date else None,
+                    "accommodation_required": accommodation_required,
+                    "shift_type": shift_type,
+                }
+                result["employee_no"] = employee_no
+                result["full_name"] = full_name
+                result["data"] = data
+
+                existing = (
+                    await db.execute(select(Employee).where(Employee.employee_no == employee_no))
+                ).scalar_one_or_none()
+                if existing is not None:
+                    result["action"] = "update"
+                    result["message"] = "employee_no exists, will update"
+                else:
+                    result["action"] = "create"
+                    result["message"] = "new employee"
+            except Exception as exc:  # noqa: BLE001 - collect per-row errors
+                result["action"] = "error"
+                result["message"] = str(exc)
+
+            raw_rows.append(result)
+    finally:
+        # Always release the read-only workbook, including validation
+        # error paths (missing headers, row-limit, empty sheet).
+        wb.close()
     if not raw_rows:
         raise ValidationError("Workbook contains no data rows")
 
@@ -814,6 +823,7 @@ async def commit_employee_import(
         await db.execute(
             select(ImportJob)
             .where(ImportJob.id == import_job_id)
+            .with_for_update()
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
@@ -823,6 +833,10 @@ async def commit_employee_import(
         raise ValidationError(f"Import job {import_job_id} is not an employee import")
     if job.status not in {"previewed", "failed"}:
         raise ConflictError(f"Import job {import_job_id} is already {job.status}")
+
+    # Claim the job so a concurrent commit cannot pass the status check
+    # (DMS-P2-005). Status is finalised below in the same transaction.
+    job.status = "committing"
 
     if not job.detail:
         raise ValidationError("Import job has no preview snapshot")
@@ -850,83 +864,98 @@ async def commit_employee_import(
             continue
 
         employee_no = data.get("employee_no")
+        # Per-row SAVEPOINT: a DB failure on one row must not poison the
+        # outer transaction or discard previously flushed good rows.
         try:
-            if not employee_no:
-                raise ValueError("employee_no is required")
-            department_id = data.get("department_id")
-            if department_id is not None and department_id not in dept_by_id:
-                raise ValueError(f"department {department_id} no longer exists")
-            if department_id is not None and dept_by_id[department_id].status != "active":
-                raise ValueError(
-                    f"department '{dept_by_id[department_id].department_code}' is disabled"
-                )
-            join_date = _parse_date(data.get("join_date"))
+            async with db.begin_nested():
+                if not employee_no:
+                    raise ValueError("employee_no is required")
+                department_id = data.get("department_id")
+                if department_id is not None and department_id not in dept_by_id:
+                    raise ValueError(f"department {department_id} no longer exists")
+                if department_id is not None and dept_by_id[department_id].status != "active":
+                    raise ValueError(
+                        f"department '{dept_by_id[department_id].department_code}' is disabled"
+                    )
+                join_date = _parse_date(data.get("join_date"))
 
-            existing = (
-                await db.execute(select(Employee).where(Employee.employee_no == employee_no))
-            ).scalar_one_or_none()
+                existing = (
+                    await db.execute(select(Employee).where(Employee.employee_no == employee_no))
+                ).scalar_one_or_none()
 
-            if action == "create" and existing is not None:
-                action = "update"
-            if action == "update" and existing is None:
-                action = "create"
+                # Preview/commit intent must match. Drift is a conflict —
+                # never silently flip create↔update (DMS-P1-002).
+                if action == "create" and existing is not None:
+                    raise ConflictError(
+                        f"conflict: employee_no '{employee_no}' already exists "
+                        f"(preview action=create); re-preview required"
+                    )
+                if action == "update" and existing is None:
+                    raise ConflictError(
+                        f"conflict: employee_no '{employee_no}' not found "
+                        f"(preview action=update); re-preview required"
+                    )
 
-            fields = {
-                "full_name": data.get("full_name"),
-                "gender": data.get("gender"),
-                "department_id": department_id,
-                "position": data.get("position"),
-                "employment_type": data.get("employment_type"),
-                "phone": data.get("phone"),
-                "join_date": join_date,
-                "accommodation_required": bool(data.get("accommodation_required", True)),
-                "shift_type": data.get("shift_type"),
-            }
+                fields = {
+                    "full_name": data.get("full_name"),
+                    "gender": data.get("gender"),
+                    "department_id": department_id,
+                    "position": data.get("position"),
+                    "employment_type": data.get("employment_type"),
+                    "phone": data.get("phone"),
+                    "join_date": join_date,
+                    "accommodation_required": bool(data.get("accommodation_required", True)),
+                    "shift_type": data.get("shift_type"),
+                }
 
+                if action == "create":
+                    emp = Employee(
+                        employee_no=employee_no,
+                        employment_status="active",
+                        **fields,
+                    )
+                    db.add(emp)
+                    await db.flush()
+                    await audit_service.write_audit(
+                        db,
+                        action="employee.import_create",
+                        resource_type="employee",
+                        resource_id=emp.id,
+                        actor_user_id=actor_user_id,
+                        request_id=request_id,
+                        after_data={"employee_no": employee_no, "import_job_id": job.id},
+                    )
+                else:
+                    before = {
+                        "employee_no": existing.employee_no,
+                        "full_name": existing.full_name,
+                        "department_id": existing.department_id,
+                        "employment_status": existing.employment_status,
+                    }
+                    for key, value in fields.items():
+                        setattr(existing, key, value)
+                    await db.flush()
+                    await audit_service.write_audit(
+                        db,
+                        action="employee.import_update",
+                        resource_type="employee",
+                        resource_id=existing.id,
+                        actor_user_id=actor_user_id,
+                        request_id=request_id,
+                        before_data=before,
+                        after_data={"employee_no": employee_no, "import_job_id": job.id},
+                    )
+            # Count only after the SAVEPOINT has been released successfully.
             if action == "create":
-                emp = Employee(
-                    employee_no=employee_no,
-                    employment_status="active",
-                    **fields,
-                )
-                db.add(emp)
-                await db.flush()
-                await audit_service.write_audit(
-                    db,
-                    action="employee.import_create",
-                    resource_type="employee",
-                    resource_id=emp.id,
-                    actor_user_id=actor_user_id,
-                    request_id=request_id,
-                    after_data={"employee_no": employee_no, "import_job_id": job.id},
-                )
                 created += 1
             else:
-                before = {
-                    "employee_no": existing.employee_no,
-                    "full_name": existing.full_name,
-                    "department_id": existing.department_id,
-                    "employment_status": existing.employment_status,
-                }
-                for key, value in fields.items():
-                    setattr(existing, key, value)
-                await audit_service.write_audit(
-                    db,
-                    action="employee.import_update",
-                    resource_type="employee",
-                    resource_id=existing.id,
-                    actor_user_id=actor_user_id,
-                    request_id=request_id,
-                    before_data=before,
-                    after_data={"employee_no": employee_no, "import_job_id": job.id},
-                )
                 updated += 1
             applied += 1
         except Exception as exc:  # noqa: BLE001 - collect per-row failures
-            row = dict(row)
-            row["action"] = "error"
-            row["message"] = str(exc)
-            errors.append(row)
+            err_row = dict(row)
+            err_row["action"] = "error"
+            err_row["message"] = str(exc)
+            errors.append(err_row)
 
     job.status = "completed" if not errors else "completed_with_errors"
     job.success_rows = applied

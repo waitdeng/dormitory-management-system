@@ -9,6 +9,8 @@ accommodation, consume reservation (BR-007). Lock order: employee → beds
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -234,6 +236,7 @@ async def reserve_target(
     transfer_id: int,
     *,
     target_bed_id: int | None = None,
+    expires_at: datetime | None = None,
     actor_user_id: int | None = None,
     request_id: str | None = None,
 ) -> dict:
@@ -285,6 +288,7 @@ async def reserve_target(
         bed_id=bed_id,
         status="active",
         reserved_at=utcnow(),
+        expires_at=expires_at,
         created_by=actor_user_id,
     )
     db.add(res)
@@ -361,6 +365,14 @@ async def complete_transfer(
     ).scalar_one_or_none()
     if res is None or res.status != "active":
         raise ConflictError("Target reservation is no longer active")
+
+    # DMS-P1-004: reject consumption of a reservation past expires_at even if
+    # the expiry scanner has not run yet.
+    if res.expires_at is not None and res.expires_at <= utcnow():
+        raise ConflictError(
+            f"Target reservation {res.reservation_no} expired at {res.expires_at}; "
+            f"re-reserve a target bed before completing the transfer"
+        )
 
     await occ.assert_bed_free_for(
         db,

@@ -47,6 +47,9 @@ class TransferCreate(BaseModel):
 
 class TransferReserveRequest(BaseModel):
     target_bed_id: int | None = None
+    # Optional reservation expiry (DMS-P1-004). Backward compatible: omitted
+    # means the transfer target reservation has no expiry.
+    expires_at: datetime | None = None
 
 
 class TransferCancelRequest(BaseModel):

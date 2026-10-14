@@ -92,7 +92,12 @@ async def test_reservation_expiry_releases_bed(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_checked_in_bed_not_released_by_expiry_scan(client: AsyncClient):
-    """A consumed reservation / live occupancy is never released by the scan."""
+    """A consumed reservation / live occupancy is never released by the scan.
+
+    DMS-P1-004: confirm rejects an already-expired reservation, so this case
+    confirms while the reservation is still valid, then advances expires_at
+    into the past to model "checked in, then time passed" before scanning.
+    """
     headers = await admin_headers(client)
     if headers is None:
         pytest.skip("Admin credentials not configured")
@@ -102,8 +107,7 @@ async def test_checked_in_bed_not_released_by_expiry_scan(client: AsyncClient):
     bed_id = dorm["beds"][0]["id"]
     room_id = dorm["room"]["id"]
 
-    past = (utcnow() - timedelta(hours=1)).isoformat()
-    # reserve with past expiry, then confirm check-in before scan
+    future = (utcnow() + timedelta(hours=1)).isoformat()
     created = await client.post(
         "/api/v1/checkin-applications", headers=headers, json={"employee_id": emp["id"]}
     )
@@ -114,13 +118,27 @@ async def test_checked_in_bed_not_released_by_expiry_scan(client: AsyncClient):
     r = await client.post(
         f"/api/v1/checkin-applications/{app_id}/reserve",
         headers=headers,
-        json={"bed_id": bed_id, "expires_at": past},
+        json={"bed_id": bed_id, "expires_at": future},
     )
     assert r.status_code == 200, r.text
     c = await client.post(
         f"/api/v1/checkin-applications/{app_id}/confirm", headers=headers, json={}
     )
     assert c.status_code == 200, c.text
+
+    # Simulate time passing after check-in: consumed reservation now "overdue"
+    from sqlalchemy import update
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.accommodation import BedReservation
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(BedReservation)
+            .where(BedReservation.employee_id == emp["id"])
+            .values(expires_at=utcnow() - timedelta(hours=1))
+        )
+        await db.commit()
 
     scan = await client.post("/api/v1/scanner/run", headers=headers)
     assert scan.status_code == 200, scan.text

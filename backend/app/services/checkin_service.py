@@ -472,6 +472,14 @@ async def confirm_checkin(
     if res is None:
         raise ConflictError("No active reservation found for this application")
 
+    # DMS-P1-004: a reservation past expires_at is logically invalid even if
+    # the background scanner has not flipped its status yet.
+    if res.expires_at is not None and res.expires_at <= utcnow():
+        raise ConflictError(
+            f"Reservation {res.reservation_no} expired at {res.expires_at}; "
+            f"re-reserve a bed before confirming check-in"
+        )
+
     await occ.assert_bed_free_for(
         db, bed_id, employee_id=emp.id, ignore_reservation_id=res.id
     )

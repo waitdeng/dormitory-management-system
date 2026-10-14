@@ -176,3 +176,48 @@
 - **决策**：Dashboard 今日入住/退宿与趋势图使用 UTC 日历日（`utcnow().date()`），与 `DATETIME(6)` UTC 存储一致，不再使用服务器本地 `date.today()`。
 - **依据**：D-007 应用层统一 UTC；本地时区会导致「今日」计数与入库时间错位。
 - **影响**：跨时区部署时看板按 UTC 日切；业务报表日期筛选仍按查询参数解释。
+
+## D-038 员工导入逐行 SAVEPOINT（DMS-P1-001）
+- **决策**：`commit_employee_import` 每行使用 `db.begin_nested()`（SAVEPOINT），单行数据库异常只回滚该行，已成功行与审计在同一外层事务内提交。
+- **依据**：任务单要求「部分成功」语义；禁止在循环内 `db.rollback()`（会撤销先前成功行）。
+- **影响**：三行导入（好/坏/好）可得到 2 成功 1 失败；`job.summary` 与审计与落库行一致。API 响应字段不变。
+
+## D-039 导入预览/提交动作禁止静默翻转（DMS-P1-002）
+- **决策**：commit 阶段若数据库状态相对 preview 漂移（preview=update 目标消失，或 preview=create 目标已存在），该行报 `conflict` 错误，不自动 create↔update。preview=update 且目标仍存在时仍允许批量更新。
+- **依据**：任务单要求 preview/commit 意图一致；不得覆盖他方写入，也不得重建已删除人员。
+- **影响**：需重新预览后再提交；既有「批量更新」能力保留。
+
+## D-040 预留过期扫描锁顺序（DMS-P1-003）
+- **决策**：`_expire_one_reservation` 改为与入住确认一致的锁顺序：员工行 → 床位行（id 升序）→ 预留/住宿业务行；先无锁 peek 取 employee_id/bed_id 仅用于定序。
+- **依据**：AGENTS.md §4 / D-021 统一锁顺序；原实现先锁预留再锁床位，与 confirm_checkin 交叉可形成锁等待环。
+- **影响**：并发确认入住 vs 扫描在同一预留上按同一顺序取锁；不释放已入住床位的不变量保持。
+
+## D-041 确认入住/完成调宿校验预留到期（DMS-P1-004）
+- **决策**：预留 `expires_at is not None and expires_at <= now` 时，`confirm_checkin` / `complete_transfer` 返回 409，不允许普通操作消费已到期预留；`expires_at is None` 表示无有效期。调宿预留接口新增可选 `expires_at`（向后兼容）。
+- **依据**：D-032「expires_at 过期 → expired」；任务单要求扫描延迟时在最终事务内显式校验。
+- **影响**：需要先重新预留再确认；无过期时间或未到期行为不变。不提供静默管理员越权确认。
+
+## D-042 导入任务并发提交防护（DMS-P2-005）
+- **决策**：`commit_employee_import` 读取 ImportJob 时 `FOR UPDATE`，并在同事务内认领状态；并发第二笔提交得到 409。
+- **依据**：任务单 P2-005；单实例下行锁足够，避免重复写入与重复审计。
+- **影响**：重复/并发 commit 不重复创建员工；响应格式不变。
+
+## D-043 Excel 工作簿 try/finally 关闭（DMS-P2-006）
+- **决策**：`preview_employee_import` 将 workbook 解析与校验置于 `try/finally`，所有异常路径（缺表头、空表、超限、坏文件）均 `wb.close()`。
+- **依据**：任务单 P2-006；保持 5MB / 2000 行业务限制。
+- **影响**：无 API 变化；资源释放可验证。
+
+## D-044 生产 API 文档默认关闭（DMS-P2-007）
+- **决策**：`ENABLE_API_DOCS` 默认 `false`；`APP_ENV != production` 仍自动开放文档；production 需显式 `ENABLE_API_DOCS=true`。Compose/README/`.env.example` 同步。
+- **依据**：任务单 P2-007（内网非阻断，但配置与文档须一致）。
+- **影响**：不影响业务 API；仅控制 `/api/docs`、`/api/openapi.json`。
+
+## D-045 Compose 生产/开发双模式（DMS-P2-008）
+- **决策**：保留 `compose.yaml` 的回环 MySQL 映射供开发/测试；新增 `compose.production.yaml`（`ports: !reset []`）供内网正式部署不发布数据库端口。文档说明两种启动方式。
+- **依据**：任务单 P2-008；不得修改正在运行容器的数据卷。
+- **影响**：宿主机 3306 被占用时生产可启动；备份脚本经 `docker exec` 仍可用。
+
+## D-046 刷新令牌并发与多副本扫描暂缓（DMS-P2-009/010）
+- **决策**：本轮不改 `refresh_tokens` 行锁/条件更新，不在多 worker 下做扫描分布式锁；在 DEPLOYMENT.md 明确「公司内网、单 backend 实例」前提与后续条件。
+- **依据**：任务单 P2-009/010 标为条件触发/内网暂缓；避免登录机制大改与多实例架构重写。
+- **影响**：若未来上公网认证或多副本部署，须单独立项补行锁与任务调度。

@@ -75,7 +75,32 @@ async def _expire_one_reservation(
     actor_user_id: int | None,
     request_id: str | None,
 ) -> str:
-    """Expire a single reservation under locks. Returns 'expired' | 'skipped'."""
+    """Expire a single reservation under locks. Returns 'expired' | 'skipped'.
+
+    Lock order matches AGENTS.md §4 / occupancy.py:
+      employee FOR UPDATE → bed(s) id-ascending FOR UPDATE → reservation /
+      accommodation business rows.
+    """
+    # Peek without locks only to learn employee/bed ids for lock ordering.
+    peek = (
+        await db.execute(
+            select(BedReservation).where(BedReservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    if peek is None:
+        return "skipped"
+    if peek.status != "active":
+        return "skipped"
+    if peek.expires_at is None or peek.expires_at >= now:
+        return "skipped"
+
+    employee_id = peek.employee_id
+    bed_id = peek.bed_id
+
+    # 1) employee row  2) bed row  3) reservation + occupancy rows
+    await occ.lock_employee(db, employee_id)
+    await occ.lock_beds(db, [bed_id])
+
     res = (
         await db.execute(
             select(BedReservation)
@@ -101,8 +126,7 @@ async def _expire_one_reservation(
         await db.commit()
         return "skipped"
 
-    await occ.lock_beds(db, [res.bed_id])
-    # Double-check no new occupancy appeared
+    # Double-check no new occupancy appeared (bed already locked above)
     acc2 = await occ.active_accommodation_for_bed(db, res.bed_id, for_update=True)
     if acc2 is not None:
         res.status = "expired"

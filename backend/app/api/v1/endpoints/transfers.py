@@ -92,6 +92,7 @@ async def reserve_target(
         db,
         transfer_id,
         target_bed_id=payload.target_bed_id,
+        expires_at=payload.expires_at,
         actor_user_id=guard.id,
         request_id=get_request_id(request),
     )
