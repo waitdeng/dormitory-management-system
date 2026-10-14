@@ -1,22 +1,62 @@
 # AGENTS.md — 公司宿舍入住管理系统（DMS）
 
 > 适用对象：MiMo Desktop / MiMo Code 及其他参与本仓库开发的 AI 编程代理。  
-> 本文件应放在 **`dormitory-management-system/AGENTS.md` 项目根目录**，对整个仓库生效。  
-> 项目版本：V1.0；维护原则：先检查实际代码，再按已批准的需求迭代，禁止重新初始化已有项目。
+> 本文件是进入仓库后的**第一入口**：声明规则优先级、文档导航与项目硬约束。  
+> 项目版本：V1.0；维护原则：先检查实际代码，再按已批准的需求迭代，**禁止重新初始化已有项目**。  
+> 已接入 **AI-SDLC v1.0**（见 `.ai/` 与 `AI_SDLC_MIGRATION_REPORT.md`）。
 
-## 0. 每次开启新任务必须执行
+## 0. 规则优先级与冲突处理
+
+1. 用户当次明确指令（含阶段指令）
+2. 项目专属规格 `DMS_V1.0_MiMo_Development_Spec.md` 与本文件（业务约束）
+3. `.ai/DEVELOPMENT_RULES.md`（跨项目通用规则，权威定义）
+4. `.ai/MILESTONES.md` / `docs/IMPLEMENTATION_PLAN.md` / 阶段验收文档
+
+**冲突处理**：不得静默覆盖或删除原有规则。发现文档与代码、通用规则与项目规则冲突时，记录到 `docs/DECISIONS.md`（技术/业务）或 `.ai/DECISIONS.md`（规范/流程），并提出兼容处理方案。业务细节以 `DMS_V1.0_MiMo_Development_Spec.md` 为准；真实项目现状以代码和测试为准。
+
+## 1. 文档导航
+
+| 主题 | 路径 |
+|---|---|
+| 项目上下文 | `.ai/PROJECT_CONTEXT.md` |
+| 通用开发规则 | `.ai/DEVELOPMENT_RULES.md` |
+| 里程碑状态（M1～M6 保持） | `.ai/MILESTONES.md` |
+| 决策索引 / 迁移决策 | `.ai/DECISIONS.md` → 正文 `docs/DECISIONS.md` |
+| 业务开发规格 | `DMS_V1.0_MiMo_Development_Spec.md` |
+| 阶段计划 | `docs/IMPLEMENTATION_PLAN.md` |
+| 阶段验收 | `docs/M1_ACCEPTANCE_REPORT.md` … `docs/M6_ACCEPTANCE_REPORT.md` |
+| 部署/备份/发布/手册 | `docs/DEPLOYMENT.md`、`docs/BACKUP_RESTORE.md`、`docs/RELEASE_CHECKLIST.md`、`docs/USER_MANUAL.md` |
+| 阶段指令 / 验收 / 最终验收模板 | `.ai/prompts/`、`.ai/acceptance/`、`.ai/audit/FINAL_WORK_ACCEPTANCE.md` |
+
+验收报告不得删除；已完成阶段不得重置为待开发。
+
+## 2. AI-SDLC 开发工作流
+
+```
+GPT Web 编写阶段指令 → MiMo 开发 → MiMo 自动化自检 → GPT Web 复核 → GitHub 提交阶段版本
+```
+
+- Web 前端涉及页面或交互修改时，必须用 **Playwright** 做真实浏览器测试，并保存截图、测试命令和结果。
+- 自检结论**不是** GPT Web 独立验收结论。
+- 全部阶段结束后，由 **ChatGPT Mac Work** 在隔离测试环境进行最终 UI/UX 与端到端验收。
+- 任何测试未实际执行时，必须明确标记为**未测试**；禁止编造测试通过记录或 Git 提交信息。
+- 未经明确授权不执行 Git commit / push / force push。
+
+细则见 `.ai/DEVELOPMENT_RULES.md`。
+
+## 3. 每次开启新任务必须执行
 
 1. **确认工作区**：打印当前工作目录，确认位于本项目根目录；若不是，停止修改并报告。
-2. **读取项目基线**：依次查看本文件、`DMS_V1.0_MiMo_Development_Spec.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DECISIONS.md`、最近阶段的 `docs/M*_ACCEPTANCE_REPORT.md`（以实际存在的文件为准）。不存在的文件要说明，不得虚构其内容。
-3. **检查实际实现**：检查 Git 状态、目录树、现有 API、ORM、Alembic migrations、前端路由、测试与 Compose 配置；区分“文档计划完成”和“代码已经实现”。
-4. **保护现场**：若有未提交更改，不得覆盖、回滚或清理；先判断与本任务是否冲突。不得擅自执行 `git reset --hard`、`git clean -fd`、强推、删除数据卷或清空数据库。
-5. **制定本任务计划**：列出本次范围、依赖、拟修改文件、可能的数据库迁移、验证命令与验收标准；在执行中更新计划。
+2. **读取项目基线**：`AGENTS.md`、`DMS_V1.0_MiMo_Development_Spec.md`、`.ai/PROJECT_CONTEXT.md`、`.ai/MILESTONES.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DECISIONS.md`、最近阶段 `docs/M*_ACCEPTANCE_REPORT.md`（以实际存在的文件为准）。不存在的文件要说明，不得虚构其内容。
+3. **检查实际实现**：Git 状态、目录树、现有 API、ORM、Alembic migrations、前端路由、测试与 Compose 配置；区分“文档计划完成”和“代码已经实现”。
+4. **保护现场**：若有未提交更改，不得覆盖、回滚或清理；先判断与本任务是否冲突。不得擅自 `git reset --hard`、`git clean -fd`、强推、删除数据卷或清空数据库。
+5. **制定本任务计划**：范围、依赖、拟修改文件、可能的数据库迁移、验证命令与验收标准；执行中更新计划。
 6. **实施并验证**：直接编辑真实项目文件，尽量小步提交、同步更新测试及文档；不能只输出伪代码、截图或静态演示代替实现。
-7. **汇报真实结果**：说明已修改文件、已运行的命令及真实结果、尚未验证事项、风险与下一步。不得声称未实际执行的测试“通过”。
+7. **汇报真实结果**：已修改文件、已运行命令及真实结果、尚未验证事项、风险与下一步。不得声称未实际执行的测试“通过”。
 
-## 1. 项目目标与 V1.0 边界
+## 4. 项目目标与 V1.0 边界
 
-本项目是企业内部行政、人事使用的宿舍管理系统，围绕 **员工 → 宿舍资源 → 预留/入住 → 调宿 → 退宿 → 离职联动 → 台账/报表** 提供可私有化部署的 Web 平台。
+企业内部行政、人事使用的宿舍管理系统，围绕 **员工 → 宿舍资源 → 预留/入住 → 调宿 → 退宿 → 离职联动 → 台账/报表** 提供可私有化部署的 Web 平台。
 
 ### V1.0 必做
 
@@ -34,21 +74,19 @@
 
 暂不开发住宿费、水电费、押金、薪资代扣、宿舍资产、维修工单、巡检、员工自助小程序、企业微信推送、外部 HR/ERP 集成。可以预留接口边界，但不得因预留而增加未经批准的复杂依赖。
 
-**冲突处理**：本文件约束 AI 工作方式；业务细节以 `DMS_V1.0_MiMo_Development_Spec.md` 为准；真实项目现状应通过代码和测试核实。发现文档与实际代码冲突时，不要默默重写，记录在 `docs/DECISIONS.md` 并提出兼容处理方案。
-
-## 2. 技术栈与架构约束
+## 5. 技术栈与架构约束
 
 - 前端：Vue 3 + TypeScript + Vite + Element Plus + Pinia + Vue Router；图表 ECharts。
 - 后端：Python FastAPI + Pydantic v2 + SQLAlchemy 2.x **异步模式** + `asyncmy`。
-- 数据库：MySQL 8.0、InnoDB、`utf8mb4`；数据库迁移使用 Alembic。
+- 数据库：MySQL 8.0、InnoDB、`utf8mb4`；迁移使用 Alembic。
 - Excel：优先 `openpyxl`；真实文件导入、校验与错误反馈。
 - 部署：Docker Compose + Nginx；Redis 仅为可选组件，不得成为唯一业务状态源。
 - 测试：pytest/httpx、前端现有测试工具（优先 Vitest），并为并发占床提供集成测试。
 - 架构：**模块化单体、前后端分离**。保持 API → Service → Repository → Model 的后端层次；Schema 独立，权限在后端强制校验。严禁以微服务改造替代当前任务。
 
-如 M1 已选择与此略有不同但可兼容的实现，先评估再调整，禁止为了“统一技术栈”无条件推翻已验收代码。
+如已实现与上表略有不同但可兼容，先评估再调整，禁止为了“统一技术栈”无条件推翻已验收代码。
 
-## 3. 项目结构与改动规范
+## 6. 项目结构与改动规范
 
 预期目录（实际以仓库为准）：
 
@@ -58,6 +96,7 @@ frontend/     # Vue、路由、状态、API Client、页面、组件、测试
 deploy/       # Nginx / 数据库等配置
 docs/         # 技术设计、决策记录、阶段计划和验收报告
 scripts/      # 经审查的备份/恢复和辅助脚本
+.ai/          # AI-SDLC 通用规范与模板
 compose.yaml  # Docker Compose 入口
 .env.example  # 非敏感配置模板
 AGENTS.md     # 本文件
@@ -71,7 +110,7 @@ DMS_V1.0_MiMo_Development_Spec.md
 - 不得用硬编码数组、模拟接口、假成功提示代替真实数据读写。
 - 不因修复局部问题而覆盖用户手工修改、现有配置或其他阶段成果。
 
-## 4. 必须坚守的业务不变量
+## 7. 必须坚守的业务不变量
 
 1. 同一员工同一时刻最多有 **一条 active 住宿记录**。
 2. 同一床位同一时刻最多有 **一条 active 住宿记录**。
@@ -86,7 +125,7 @@ DMS_V1.0_MiMo_Development_Spec.md
 
 **事务锁顺序**：优先锁员工行，再按 bed_id 升序锁目标/原床位行，随后锁住宿、预留及业务单据行；所有相关服务保持一致。SQL 生成列和唯一索引只能覆盖单表 active 唯一性，跨表占用冲突仍须事务校验。
 
-## 5. 数据库与迁移安全
+## 8. 数据库与迁移安全
 
 - 所有结构变更通过 Alembic migration，**不要用 `Base.metadata.create_all()` 替代正式迁移**。
 - 每个迁移包括：目标、可能影响、升级验证、回滚可行性；高风险迁移需说明备份和恢复方式。
@@ -96,7 +135,7 @@ DMS_V1.0_MiMo_Development_Spec.md
 - 导入员工资料时以 **员工工号** 而非姓名匹配；采用上传 → 校验 → 预览 → 确认写入 → 错误报告流程。
 - 测试需要清理数据时仅操作可识别的隔离测试数据库，不操作开发人员现有业务数据。
 
-## 6. 安全与隐私要求
+## 9. 安全与隐私要求
 
 - 后端默认拒绝未授权请求；未认证返回 401，已认证但无权返回 403。
 - 使用安全密码哈希和可撤销/可过期的认证机制；严禁在代码、日志、报告中泄露密码或 Token。
@@ -105,7 +144,7 @@ DMS_V1.0_MiMo_Development_Spec.md
 - 上传 Excel 必须限制文件类型、大小、行数并防范公式注入；导出文本字段需进行电子表格公式注入防护。
 - 不得关闭权限检查、数据库约束或测试来“使功能通过”。
 
-## 7. 阶段边界与进入条件
+## 10. 阶段边界与进入条件
 
 | 阶段 | 目标 | 完成条件 |
 |---|---|---|
@@ -116,19 +155,19 @@ DMS_V1.0_MiMo_Development_Spec.md
 | M5 | 可视化床位分配、住宿台账、报表 | 统计口径一致、查询/导出/交互测试通过 |
 | M6 | 集成测试、数据迁移、上线与恢复验证 | 验收、部署、备份恢复及操作说明完整 |
 
-**当前阶段以仓库中的验收报告为准**。用户已说明 M1 已完成开发，但本文件不能据此认定 M1 已测试通过。开始 M2 前必须读取并核实 `docs/M1_ACCEPTANCE_REPORT.md`；若文件尚未存在或 M1 存在阻塞问题，先完成验收/修复，再进入 M2。
+**当前阶段以仓库中的验收报告为准**（M1～M6 已完成，见 `.ai/MILESTONES.md` 与 `docs/M*_ACCEPTANCE_REPORT.md`）。不得仅凭文档声称“已测试通过”。开始新阶段（如 M7）前必须由 GPT Web 下发阶段指令，并读取核实上一阶段验收报告。
 
-### M2 专项执行顺序
+### M2 专项执行顺序（历史参考，阶段已完成）
 
 1. 检查 M1 实现、迁移与 RBAC，确认稳定基线。
 2. 部门数据模型、接口、权限和前端页面。
 3. 员工档案及员工详情，工号唯一性校验。
 4. Excel 模板、预览、校验、提交、错误报告及导出。
 5. 宿舍区域 → 楼栋 → 楼层 → 房间 → 床位基础数据及状态管理。
-6. 现阶段展示的空床状态只能基于已实现的模型；不要虚构 M3 正式入住数据。
-7. 统一联调、运行测试，更新 `docs/M2_ACCEPTANCE_REPORT.md`。
+6. 展示的空床状态只能基于已实现的模型；不要虚构 M3 正式入住数据。
+7. 统一联调、运行测试，更新阶段验收报告。
 
-## 8. 执行与验证规则
+## 11. 执行与验证规则
 
 每次修改后，选择适用命令并 **实际执行**；以下是参考命令，必须先检查项目现有脚本、依赖与服务名：
 
@@ -149,6 +188,10 @@ python -m compileall app
 # 前端（以 package.json scripts 为准）
 npm run build
 npm run test
+npm run typecheck
+
+# Playwright（Web UI 变更必做）
+cd frontend && npx playwright test
 
 # 数据库（必须连接预期的安全环境）
 alembic current
@@ -160,25 +203,25 @@ alembic upgrade head
 - 对关键路径至少测试：重复工号、重复床位、并发预留、同员工重复入住、调宿/退宿竞争、离职未退宿、越权访问、导入异常。
 - 完成一个阶段时必须记录测试命令、关键输出和结果；必要时附环境版本。
 
-## 9. 文档、决策、验收与交接
+## 12. 文档、决策、验收与交接
 
 按实际阶段维护：
 
 - `docs/IMPLEMENTATION_PLAN.md`：目标、任务拆分、进度、依赖和阻塞。
-- `docs/DECISIONS.md`：有日期的设计决策、取舍、兼容性影响。
-- `docs/M1_ACCEPTANCE_REPORT.md` 至 `docs/M6_ACCEPTANCE_REPORT.md`：阶段验收报告。
-- `docs/DATABASE_DESIGN.md`：表结构及约束变化。
-- `docs/API_SPECIFICATION.md`：接口/错误码/权限变化。
+- `docs/DECISIONS.md`：有日期的技术/业务设计决策、取舍、兼容性影响。
+- `.ai/DECISIONS.md`：规范/流程/迁移类决策与索引。
+- `docs/M1_ACCEPTANCE_REPORT.md` 至 `docs/M6_ACCEPTANCE_REPORT.md`：阶段验收报告（不得删除）。
+- 数据库/API 设计文档以仓库实际存在为准（如 `docs/DATABASE_DESIGN.md`、`docs/API_SPECIFICATION.md`）。
 - `docs/DEPLOYMENT.md`：启动、迁移、备份、环境配置与故障排查。
 
-阶段验收报告至少包含：**完成范围、修改文件、数据库迁移、实际执行的检查命令及结果、未执行项、风险与遗留问题、验收结论、后续建议**。
+阶段验收报告至少包含：**完成范围、修改文件、数据库迁移、实际执行的检查命令及结果、未执行项、风险与遗留问题、验收结论、后续建议**。新阶段可用 `.ai/acceptance/ACCEPTANCE_TEMPLATE.md`。
 
 建议每阶段验收通过后由用户确认并创建 Git 提交；未经明确授权，不要重写历史、强制推送或自动发布到生产环境。
 
-## 10. MiMo 新任务推荐启动指令
+## 13. 新任务推荐启动指令
 
-> 你正在继续已有的 DMS 项目，不是创建新项目。先读取项目根目录 `AGENTS.md` 和 `DMS_V1.0_MiMo_Development_Spec.md`，再检查 Git 状态、源码、迁移、测试及上一阶段验收报告。确认当前阶段及现有实现后，提出本次修改计划，并在原项目中直接实现。不得重新初始化、清除数据库或覆盖现有成果。完成后运行适用测试并更新阶段验收报告；明确区分实际验证与未验证事项。
+> 你正在继续已有的 DMS 项目，不是创建新项目。先读取项目根目录 `AGENTS.md` 和 `DMS_V1.0_MiMo_Development_Spec.md`，再检查 Git 状态、源码、迁移、测试及上一阶段验收报告。确认当前阶段及现有实现后，提出本次修改计划，并在原项目中直接实现。不得重新初始化、清除数据库或覆盖现有成果。完成后运行适用测试并更新阶段验收报告；明确区分实际验证与未验证事项。涉及 Web UI 时使用 Playwright 真实测试并留存证据。
 
 ---
 
-**维护本文件的规则**：只有当技术规范、项目约束或阶段流程发生明确变化时才修改 `AGENTS.md`；普通开发进度写入 `docs/IMPLEMENTATION_PLAN.md` 和阶段验收报告，不应反复堆积在本文件。修改本文件必须说明变更原因，并保持与主开发规格文档一致。
+**维护本文件的规则**：只有当技术规范、项目约束、规则优先级或阶段流程发生明确变化时才修改 `AGENTS.md`；普通开发进度写入 `docs/IMPLEMENTATION_PLAN.md` 和阶段验收报告，不应反复堆积在本文件。修改本文件必须说明变更原因，并保持与主开发规格文档一致。
