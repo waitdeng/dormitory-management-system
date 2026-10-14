@@ -1,0 +1,89 @@
+name: dormitory-management-system
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dms}
+      MYSQL_USER: ${MYSQL_USER:-dms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    # Bind to localhost only — never publish MySQL on 0.0.0.0 (spec §11).
+    # Remove this ports block in hardened production deployments.
+    ports:
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u \"$$MYSQL_USER\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      APP_ENV: ${APP_ENV:-production}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dms}
+      MYSQL_USER: ${MYSQL_USER:-dms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
+      DMS_ADMIN_USERNAME: ${DMS_ADMIN_USERNAME:-admin}
+      DMS_ADMIN_PASSWORD: ${DMS_ADMIN_PASSWORD:-}
+      DMS_ADMIN_DISPLAY_NAME: ${DMS_ADMIN_DISPLAY_NAME:-Super Administrator}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-14}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [internal, frontend_net]
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [frontend_net]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: [cache]
+    volumes: [redis_data:/data]
+    networks: [internal]
+
+networks:
+  frontend_net:
+  internal:
+    # Not marked `internal: true` so MySQL can publish a loopback-only port for
+    # local development and integration tests. Production hardening should either
+    # drop the ports mapping or keep it bound to 127.0.0.1 (never 0.0.0.0).
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:

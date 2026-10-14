@@ -1,0 +1,34 @@
+:root {
+  --dms-bg: #f5f7fa;
+  --dms-sidebar: #1f2d3d;
+  --dms-sidebar-text: #bfcbd9;
+  --dms-accent: #409eff;
+  --dms-ink: #303133;
+  --dms-muted: #909399;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family:
+    'PingFang SC',
+    'Microsoft YaHei',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  color: var(--dms-ink);
+  background: var(--dms-bg);
+}
+
+a {
+  text-decoration: none;
+}

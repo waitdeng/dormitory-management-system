@@ -1,0 +1,178 @@
+# DMS V1.0 技术与业务决策记录
+
+> 规格不明确处的取舍统一记录在此，不擅自扩大需求。
+
+## D-001 密码哈希算法
+- **决策**：使用 Argon2id（`argon2-cffi`），而非 bcrypt。
+- **依据**：规格 §11「登录密码使用 Argon2id 等安全哈希」。
+- **影响**：依赖 `argon2-cffi`；哈希参数使用库默认安全参数。
+
+## D-002 认证令牌机制
+- **决策**：采用双 Token：`access_token`（短期，JWT）+ `refresh_token`（较长，可撤销，存数据库）。
+- **依据**：规格 §6.1 含 `/auth/refresh`，且 §11 要求「可撤销的认证机制」。
+- **影响**：`sys_users` 旁增加刷新令牌关联表 `auth_refresh_tokens`（非规格表名，见 D-003）；登出/禁用账号立即失效。
+
+## D-003 规格外的支撑表
+- **决策**：增加 `auth_refresh_tokens` 支撑可撤销会话；不增加其他业务表。
+- **依据**：规格允许实现必要支撑结构以满足可撤销认证；业务表严格按 §5.1。
+- **影响**：迁移中包含该表；仅存 token 哈希，不存明文。
+
+## D-004 JWT 库
+- **决策**：使用 `PyJWT`（而非 python-jose）。
+- **依据**：维护活跃、API 简洁；签名算法 HS256，密钥来自 `SECRET_KEY` 环境变量。
+- **影响**：生产必须配置足够强度的 `SECRET_KEY`。
+
+## D-005 错误响应格式
+- **决策**：业务错误统一 `{code, message, details, request_id}`；HTTP 状态码保留语义（400/401/403/404/409/422/500）。
+- **依据**：规格 §6 统一要求。
+- **实现**：FastAPI 全局 exception handler。
+
+## D-006 分页信封
+- **决策**：列表接口统一 `{items, total, page, page_size}`。
+- **依据**：规格 §6。
+
+## D-007 时间与数据库
+- **决策**：应用层统一 UTC；MySQL 连接 `TZ=UTC`；`created_at/updated_at` 为 `DATETIME(6)`。
+- **依据**：规格 §5。
+
+## D-008 数据库连接串
+- **决策**：使用 SQLAlchemy `URL.create()` 构造连接，避免密码含特殊字符时失败。
+- **依据**：规格 §12.1 注释。
+
+## D-009 迁移策略
+- **决策**：Alembic 为唯一建表方式；禁止 `create_all` 作为正式路径。迁移可重复 `upgrade head`。
+- **依据**：规格 §2 与执行指令第 4 条。
+
+## D-010 活动记录唯一性
+- **决策**：M1 仅建立认证相关表；M3 落地 `accommodation_records` / `bed_reservations` 生成列 + 唯一索引（规格 §5.3），并强制 Service 层事务 + 行锁校验跨表冲突。
+- **依据**：规格 §5.3 明确生成列不能跨表，必须事务内重检。
+
+## D-011 测试策略
+- **决策**：
+  - 单元测试（安全、Schema、纯逻辑）不依赖数据库；
+  - 集成/并发测试必须跑在真实 MySQL 8.0（Docker Compose），禁止 SQLite 充当并发语义验证。
+- **依据**：规格 §13。
+
+## D-012 默认权限编码
+- **决策**：采用规格 §8 建议编码：`employee:view/create/update/import/export/offboard`、`dorm:view/create/update`、`bed:manage`、`checkin:view/create/approve/allocate/confirm`、`transfer:view/create/complete`、`checkout:view/create/inspect/complete`、`report:view/export`、`user:manage`、`role:manage`、`audit:view`。
+- **影响**：种子数据写入上述权限；角色矩阵见 `docs/PERMISSIONS.md`（M2+ 补全文档）。
+
+## D-013 管理员初始化
+- **决策**：首次部署通过 `python -m app.seed`（读取环境变量 `DMS_ADMIN_USERNAME` / `DMS_ADMIN_PASSWORD`）初始化超级管理员与 RBAC 目录；不在源码写死密码。Docker 启动命令已包含该步骤。
+- **依据**：执行指令第 6 条。
+
+## D-014 前端类型来源
+- **决策**：以 OpenAPI/Pydantic Schema 为权威，手工同步 `frontend/src/types`（M1）；M6 联调时可用 openapi-typescript 自动生成校验一致性。
+- **影响**：接口变更须同步前端类型与测试。
+
+## D-015 Redis
+- **决策**：V1.0 不把 Redis 作为业务状态唯一依据；Compose 中仅作为可选 profile（`cache`）。
+- **依据**：规格 §2「Redis 可选」。
+
+## D-016 审计日志
+- **决策**：`audit_logs` 仅追加，禁止 UPDATE/DELETE 路由；敏感字段（密码哈希、token）不入库。
+- **依据**：规格 §5.1 与 §11。
+
+## D-017 M1 范围边界
+- **决策**：M1 只交付骨架 + 认证/用户/角色/权限/审计/健康检查；不实现员工、宿舍、入住业务（M2/M3）。
+- **依据**：规格 §16 里程碑划分，避免一次生成无法验证的大量代码。
+
+## D-018 MySQL 端口与网络
+- **决策**：`compose.yaml` 中 MySQL 将 3306 绑定到 `127.0.0.1`（默认变量 `MYSQL_HOST_PORT`），network 保持 bridge 而非 `internal: true`。
+- **依据**：Docker 的 `internal: true` 网络会阻止端口发布，导致宿主机无法执行集成测试；仅绑定回环地址仍满足「不对公网暴露」（规格 §11）。生产加固时可删除 ports 映射或继续保持 127.0.0.1。
+- **影响**：本地 `pytest` 可直连 MySQL；生产部署应确认不要绑定 `0.0.0.0`。
+
+## D-019 测试连接池与事件循环
+- **决策**：测试夹具在每个用例后 `await engine.dispose()`，避免 SQLAlchemy 异步连接池跨 pytest-asyncio 事件循环复用。
+- **依据**：pytest-asyncio 默认每用例新建 event loop，池化连接会报 "Future attached to a different loop"。
+- **影响**：`tests/conftest.py` 含 autouse 夹具；应用运行时不受影响。
+
+## D-020 异步 ORM 禁止懒加载
+- **决策**：服务层一律使用 `selectinload` / 显式查询读取关联，禁止依赖 `user.roles` 等懒加载；需要刷新时用 `populate_existing=True`。
+- **依据**：SQLAlchemy 2 async 中懒加载会触发 `MissingGreenlet`。
+- **影响**：`user_service._assign_roles` 改为查询 `sys_user_roles` 表。
+
+## D-021 M2 权限复用（不新增权限码）
+- **决策**：M2 不新增权限码，继续使用 M1 已落地的 27 个权限码。部门管理读操作用 `employee:view`，写操作用 `employee:update`（创建部门用 `employee:create`）；员工用 `employee:*`；宿舍层级用 `dorm:view/create/update`，床位启停用 `bed:manage`。
+- **依据**：AGENTS.md 要求复用既有 RBAC；规格 §8 权限矩阵把部门档案归入员工档案能力，未单列 `dept:` 码。
+- **影响**：前端菜单/按钮权限与后端依赖注入保持同一套码。
+
+## D-022 部门接口前缀
+- **决策**：提供 `GET/POST /api/v1/departments`、`PATCH /api/v1/departments/{id}`、`GET /api/v1/departments/tree`。规格 §6 未单列部门接口，但数据模型与 M2 交付要求部门可维护。
+- **依据**：AGENTS.md M2「部门数据模型、接口、权限和前端页面」。
+- **影响**：OpenAPI 与前端类型同步增加部门资源。
+
+## D-023 M2 不建住宿业务表
+- **决策**：M2 只建 `departments`、`employees`、`dorm_areas/buildings/floors/rooms/beds`、`import_jobs`。`accommodation_records`、`bed_reservations` 等留到 M3。
+- **依据**：AGENTS.md「仅开发 M2 范围内的功能，不提前实现 M3 业务」。
+- **影响**：员工「当前住宿/住宿历史」接口返回空结果；床位占用状态暂由 `operational_status` 表示，不计算在住/预留。
+
+## D-024 员工匹配键与导入策略
+- **决策**：Excel 导入以 **员工工号 employee_no** 为唯一匹配键；两阶段导入（preview → commit），`import_jobs` 记录批次、哈希、统计与错误文件路径；文件名与解析行存元数据，不存原始 Excel 二进制。
+- **依据**：AGENTS.md §5「导入员工资料时以员工工号而非姓名匹配」；规格 §9.2。
+- **影响**：预览阶段校验空工号/重复工号/日期/部门编码，返回 `新增/更新/跳过/错误`；提交阶段按批次写入并生成错误明细。
+
+## D-025 M3 业务表与生成列唯一索引
+- **决策**：M3 新增 `accommodation_applications` / `bed_reservations` / `accommodation_records` / `transfer_records` / `checkout_records`。对 `bed_reservations` 与 `accommodation_records` 使用 MySQL 生成列 `active_employee_id` / `active_bed_id` + UNIQUE，约束单表内 active 唯一；`checkout_records` 用生成列 `open_accommodation_id` 保证同一住宿仅一张未完结退宿单。
+- **依据**：规格 §5.1/§5.3；AGENTS.md 要求数据库级唯一约束。
+- **影响**：跨表（预留 vs 入住）冲突仍须服务层在事务 + 行锁内复检（规格 §5.3 注记）。
+
+## D-026 行锁顺序
+- **决策**：所有入住/预留/调宿/退宿事务统一锁顺序：`employees` FOR UPDATE → 涉及 `dorm_beds` 按 id 升序 FOR UPDATE → 住宿/预留/业务单据行。
+- **依据**：AGENTS.md §4 与规格 §5.4，避免死锁。
+- **影响**：`app/services/occupancy.py` 提供 `lock_employee` / `lock_beds` 与跨表冲突校验，三个业务服务共用。
+
+## D-027 M3 幂等策略
+- **决策**：状态机守护 + 重复完成/确认返回既有结果（不重复建单）；写入接口可选 `Idempotency_KEY` 字段做去重（单表 UNIQUE）。暂不单独建 `idempotency_keys` 表。
+- **依据**：AGENTS.md「幂等处理或等效防重机制」；规格 §5.4。
+- **影响**：并发同床预留由生成列 UNIQUE + 行锁保证仅一笔成功，另一笔 409。
+
+## D-028 调宿与退宿互斥
+- **决策**：允许调宿单与退宿单同时存在（便于竞态裁决）；但 `complete_transfer` 在存在未完结退宿单时拒绝，`complete_checkout` 在存在未完结调宿单时拒绝。住宿被调宿结束后，指向旧住宿的退宿单完成会返回 409，防止“调走后仍按旧床退宿”。
+- **依据**：规格验收用例「调宿与退宿同时执行」不得产生多条有效住宿或悬空预留。
+- **影响**：前端可先开退宿再开调宿，完成阶段由事务裁决。
+
+## D-029 床位停用与占用
+- **决策**：`disable` 在床位存在 active 住宿或预留时返回 409；`maintenance` 允许已有住户，展示层仍标记 occupied。
+- **依据**：规格 §6.3「停用床位（校验当前占用）」与 §5.5 维修中住户不隐藏。
+- **影响**：M2 的 `set_bed_status` 占位逻辑替换为真实校验。
+
+## D-030 M4 状态事件幂等键作用域
+- **决策**：`employee_status_events` 的 `source_event_id` 在使用自定义 `idempotency_key` 时按员工作用域拼为 `emp{employee_id}:{key}`；默认键为 `offboarding:{id}` / `terminate:{id}`。
+- **依据**：规格 §5.4 / P0 场景 C 要求重复事件幂等，且同一 key 不应跨员工碰撞。
+- **影响**：命中已有事件时仍执行 `ensure_*` 幂等补齐副作用（补齐因部分失败缺失的待办），不重复生成。
+
+## D-031 人事状态变更走事件管线
+- **决策**：`PATCH /employees/{id}` 将 `employment_status` 改为 `offboarding`/`terminated` 时，路由到 `offboarding_service.apply_status_change`，与专用接口共用副作用。
+- **依据**：P0 场景 A/B「人事将状态修改为 offboarding/terminated」需一致生成退宿待办/预警。
+- **影响**：`EMPLOYMENT_STATUS_VALUES` 增加 `pending`、`offboarding`（规格 §4.3）。
+
+## D-032 M4 后台扫描任务
+- **决策**：进程内 asyncio 周期任务（默认 60s，`SCANNER_INTERVAL_SECONDS`）+ `POST /api/v1/scanner/run` 手动触发；扫描在行锁下重检状态，可安全重试。
+- **依据**：规格 §13「预留超期通过定时后台任务扫描」；AGENTS.md 要求幂等。
+- **影响**：预留 `active` 且 `expires_at` 过期 → `expired`；已 `consumed`/`cancelled` 不受影响。预警按 fingerprint 幂等。
+
+## D-033 M5 部门数据范围解析
+- **决策**：`super_admin`/`hr` 为全量范围；其他角色范围 = `sys_user_departments` 显式授权 ∪ `departments.manager_employee_id` 匹配用户 `employee_id` 的部门及其下级。空范围默认拒绝（看不到任何员工/住宿数据）。
+- **依据**：AGENTS.md M5 P0「部门负责人数据范围控制」；规格 §8 ◇ 表示只限授权数据范围。
+- **影响**：`GET /users/{id}/departments`（PUT）管理授权；列表过滤与详情 403 均在后端强制。
+
+## D-034 M5 报表统计口径
+- **决策**：空闲床位 = `operational_status=active` 且无 active 住宿且无 active 预留；维修/停用不计入可分配；已离职未退宿仍计入在住；台账与导出共用同一查询与范围过滤。
+- **依据**：AGENTS.md 第四节报表一致性要求。
+- **影响**：`report_service` / `dashboard_service` 为唯一统计来源，前端不自行计算业务状态。
+
+## D-035 角色导出权限
+- **决策**：按规格 §8 矩阵，为 `dept_manager` / `finance_viewer` 增加 `report:export`；`dept_manager` 另授 `employee:export` 以便在数据范围内导出本部门员工。
+- **依据**：P0「Excel 导出必须遵循相同的数据范围」需覆盖导出路径。
+- **影响**：seed 仅追加权限；既有用户重新登录或跑 seed 后生效。
+
+## D-036 Dashboard 指标范围口径（M6 P0-1）
+- **决策**：员工关联指标（`housed_employees`、`today_checkin/checkout`、`terminated_still_housed`、`active_alerts`、`pending_todos`、`department_housed`、trends 序列）一律按部门数据范围过滤；宿舍设施容量指标（`bed_total`/`occupied_beds`/`vacant_beds`/`occupancy_rate`/楼栋房间数）保持全局，因空床库存是分床决策所需资源信息，不暴露员工或其他部门人事数据。`department_housed` 在范围过滤后再按在住人数排序并截断，避免授权部门被无条件 `limit(20)` 丢弃。
+- **依据**：M6 P0-1「未经授权不得向部门负责人披露其他部门的敏感数据」；设施容量≠部门敏感数据。
+- **影响**：空范围用户员工类 KPI 全为 0；`date.today()` 改为 UTC 日历（与 `utcnow` 存储一致）。
+
+## D-037 Dashboard UTC 日历
+- **决策**：Dashboard 今日入住/退宿与趋势图使用 UTC 日历日（`utcnow().date()`），与 `DATETIME(6)` UTC 存储一致，不再使用服务器本地 `date.today()`。
+- **依据**：D-007 应用层统一 UTC；本地时区会导致「今日」计数与入库时间错位。
+- **影响**：跨时区部署时看板按 UTC 日切；业务报表日期筛选仍按查询参数解释。
