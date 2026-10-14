@@ -10,6 +10,10 @@
 .env.*.local
 backend/.env
 frontend/.env.local
+*.pem
+*.key
+*.p12
+id_rsa*
 
 # Python
 __pycache__/
@@ -27,16 +31,35 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 *.log
 
 # Docker volumes (local bind data)
 mysql_data/
 redis_data/
 
-# Backups
+# Backups / database dumps (local test data)
 backups/
+*.sql
 *.sql.gz
+*.dump
 
 # Build artifacts
 *.tar
 *.tar.gz
+
+# Test / Playwright local artifacts (screenshots, traces, last-run)
+test-results/
+frontend/test-results/
+playwright-report/
+frontend/playwright-report/
+**/test-results/
+**/playwright-report/
+
+# AI-SDLC local scratch and original package archive (kept local read-only)
+.ai/local/
+AI-SDLC-v1.0.zip
+
+# Historical migration copy — do not track in the formal repo
+# (authoritative specs live in .ai/ at project root; see AI_SDLC_MIGRATION_REPORT.md)
+.ai/migration/

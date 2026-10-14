@@ -13,7 +13,9 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     # Bind to localhost only — never publish MySQL on 0.0.0.0 (spec §11).
-    # Remove this ports block in hardened production deployments.
+    # Development / integration tests: this loopback mapping is convenient.
+    # Production (intranet, no host DB access): use compose.production.yaml
+    # which resets `ports` so MySQL is reachable only on the Compose network.
     ports:
       - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
     networks: [internal]
@@ -41,6 +43,8 @@ services:
       DMS_ADMIN_DISPLAY_NAME: ${DMS_ADMIN_DISPLAY_NAME:-Super Administrator}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-14}
+      # Production hides /api/docs by default (see compose.production.yaml).
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
     depends_on:
       mysql:
         condition: service_healthy

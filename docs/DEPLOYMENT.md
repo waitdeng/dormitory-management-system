@@ -36,11 +36,27 @@ cp .env.example .env
 ### 2.2 启动服务
 
 ```bash
+# 开发 / 本地联调（MySQL 映射到 127.0.0.1:3306）
 docker compose up -d --build
+
+# 公司内网正式部署（MySQL 不发布到宿主机，仅 Compose 网络可达）
+docker compose -f compose.yaml -f compose.production.yaml up -d --build
+
 docker compose ps
 ```
 
 启动顺序：mysql（healthy）→ backend（跑 `alembic upgrade head` + `app.seed` + uvicorn）→ frontend（nginx）。
+
+**两种 Compose 模式**
+
+| 模式 | 命令 | MySQL 端口 | 适用 |
+|---|---|---|---|
+| 开发 | `docker compose up` | `127.0.0.1:3306` | 本地调试、集成测试、宿主机 GUI 连库 |
+| 生产 | `docker compose -f compose.yaml -f compose.production.yaml up` | 无宿主机映射 | 内网正式部署；宿主机 3306 被占用时仍可启动 |
+
+备份脚本 `scripts/backup.sh` 通过 `docker exec` 在容器内执行 `mysqldump`，两种模式均可用，不依赖宿主机端口。
+
+**单实例前提**：预留过期扫描（`SCANNER_ENABLED`）在每个 FastAPI 进程 lifespan 内启动。V1 内网单 backend 实例可直接使用；若改为多 worker（`uvicorn --workers N`）或多副本部署，会出现扫描重入，届时需独立任务调度或分布式锁，不要直接横向扩容 backend。
 
 ### 2.3 验证
 
@@ -73,11 +89,11 @@ docker compose logs backend | tail -50   # 确认迁移与启动日志
 
 | 项 | 要求 | 本仓库默认 |
 |---|---|---|
-| MySQL 端口 | 不对外网开放 | `127.0.0.1:3306` 映射；生产可删除 ports |
+| MySQL 端口 | 不对外网开放 | 开发：`127.0.0.1:3306`；生产用 `compose.production.yaml` 去掉映射 |
 | SECRET_KEY | 足够强度随机值，可轮换 | 环境变量，`.env.example` 仅占位 |
 | 管理员口令 | 首次登录后修改 | 启动时 seed |
 | HTTPS | TLS1.2+，HSTS | 见 `deploy/nginx/ssl.conf.example` |
-| API 文档 | 生产隐藏 `/api/docs` | `APP_ENV=production` 且 `ENABLE_API_DOCS=false` 时隐藏 |
+| API 文档 | 生产隐藏 `/api/docs` | 默认关闭；`ENABLE_API_DOCS=true` 才在 production 开放 |
 | 上传限制 | 文件类型/大小 | 5MB 服务端校验 + nginx `client_max_body_size 8m` |
 | 导出安全 | 公式注入防护 | `_safe_excel_value` |
 | CORS | 仅允许前端源 | `CORS_ORIGINS` |
@@ -95,8 +111,13 @@ docker compose logs backend | tail -50   # 确认迁移与启动日志
 ```bash
 # .env
 APP_ENV=production
-ENABLE_API_DOCS=false
+ENABLE_API_DOCS=false   # 默认已是 false；仅在内网需要调试时改为 true
 ```
+
+`/api/docs` 与 `/api/openapi.json` 的暴露条件（`backend/app/main.py`）：
+
+- `APP_ENV != production`：始终开放（开发/测试）
+- `APP_ENV == production`：仅当 `ENABLE_API_DOCS=true` 时开放
 
 ---
 
@@ -114,7 +135,8 @@ ENABLE_API_DOCS=false
 | `REFRESH_TOKEN_EXPIRE_DAYS` | 刷新令牌 | `14` |
 | `SCANNER_ENABLED` | 预留过期/预警扫描 | `true` |
 | `SCANNER_INTERVAL_SECONDS` | 扫描间隔 | `60` |
-| `ENABLE_API_DOCS` | 是否暴露 OpenAPI | `true` |
+| `ENABLE_API_DOCS` | 是否在 production 暴露 OpenAPI | `false` |
+| `MYSQL_HOST_PORT` | 开发模式宿主机映射端口 | `3306` |
 | `CORS_ORIGINS` | 允许的前端源 | localhost 列表 |
 
 ---

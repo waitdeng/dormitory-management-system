@@ -1,0 +1,24 @@
+# Production override — company intranet, single backend instance.
+#
+# Hides MySQL from the host entirely (backend still reaches it on the
+# Compose network). Use when another service already owns host :3306 or
+# when you do not need host-side DB access.
+#
+# Usage:
+#   docker compose -f compose.yaml -f compose.production.yaml up -d --build
+#
+# Keep compose.yaml alone for local development / integration tests
+# (loopback-only MySQL port on 127.0.0.1:${MYSQL_HOST_PORT:-3306}).
+
+services:
+  mysql:
+    # Drop the development loopback port mapping. !reset replaces the
+    # inherited ports list instead of appending to it.
+    ports: !reset []
+
+  backend:
+    environment:
+      # Production stays out of /api/docs unless explicitly opted in.
+      # Development (APP_ENV != production) still serves docs.
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+      APP_ENV: ${APP_ENV:-production}
