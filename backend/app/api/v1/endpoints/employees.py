@@ -45,6 +45,7 @@ async def list_employees(
     department_id: int | None = Query(None, ge=1),
     employment_status: str | None = Query(None, max_length=32),
     accommodation_status: str | None = Query(None, max_length=32),
+    accommodation_required: bool | None = Query(None),
 ) -> PageEnvelope[EmployeeOut]:
     scope = await resolve_for_principal(db, guard)
     items, total = await employee_service.list_employees(
@@ -55,6 +56,7 @@ async def list_employees(
         department_id=department_id,
         employment_status=employment_status,
         accommodation_status=accommodation_status,
+        accommodation_required=accommodation_required,
         scope=scope,
     )
     return PageEnvelope[EmployeeOut](items=items, total=total, page=page, page_size=page_size)

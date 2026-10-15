@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
   alertsSummary,
   cancelTodo,
@@ -99,7 +99,7 @@ async function loadTodos(): Promise<void> {
     todoTotal.value = list.total
     todoSummary.value = summary
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     todoLoading.value = false
   }
@@ -120,7 +120,7 @@ async function loadAlerts(): Promise<void> {
     alertTotal.value = list.total
     alertSummary.value = summary
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     alertLoading.value = false
   }
@@ -140,7 +140,7 @@ async function onCompleteTodo(row: WorkflowTodoOut): Promise<void> {
     ElMessage.success('待办已完成')
     await loadTodos()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -153,7 +153,7 @@ async function onCancelTodo(row: WorkflowTodoOut): Promise<void> {
     ElMessage.success('待办已取消')
     await loadTodos()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(extractError(error))
+    if (error !== 'cancel') notifyError(error)
   }
 }
 
@@ -166,7 +166,7 @@ async function onResolveAlert(row: WorkflowAlertOut): Promise<void> {
     ElMessage.success('预警已解除')
     await loadAlerts()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(extractError(error))
+    if (error !== 'cancel') notifyError(error)
   }
 }
 
@@ -177,7 +177,7 @@ async function onRunScanner(): Promise<void> {
     ElMessage.success('扫描任务已执行')
     await loadAll()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     scanning.value = false
   }

@@ -1,0 +1,17 @@
+DMS V1.0.1 FREEZE MANIFEST
+==========================
+Version: V1.0.1
+Release freeze UTC: 2026-10-15T03:45:14Z
+Snapshot file: dms-V1.0.1-freeze-20261015114514.zip
+SHA-256: f7de68ce252ecebacae6126145908b26f820c143ea5a21031b83b875c55cc520
+Git: NOT USED (no commit SHA / tag)
+Alembic head: 0006_v101_room_access_and_types
+Backend pytest: 167 passed
+Frontend vitest: 5 passed | typecheck: 0 error | build: success
+Playwright: 18 passed
+Docker compose: backend/frontend/mysql healthy
+Fresh-DB drill: dms_v101_fresh_drill 0001->0006 + seed (27 tables / 30 perms / 6 roles)
+ACCESS_CODE_ENCRYPTION_KEY current runtime: NOT SET (must configure for production)
+HOTFIX-07B: CANCELLED by user decision
+Development test data: NOT migrated to production
+Release docs: RELEASE_NOTES / RELEASE_CHECKLIST / KNOWN_ISSUES / V1_0_2_BACKLOG

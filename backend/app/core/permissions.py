@@ -19,6 +19,12 @@ PERM_DORM_VIEW: Final = "dorm:view"
 PERM_DORM_CREATE: Final = "dorm:create"
 PERM_DORM_UPDATE: Final = "dorm:update"
 PERM_BED_MANAGE: Final = "bed:manage"
+# FEAT-008: room door access code is a sensitive credential
+PERM_DORM_ACCESS_CODE_VIEW: Final = "dorm:access_code:view"
+PERM_DORM_ACCESS_CODE_UPDATE: Final = "dorm:access_code:update"
+# Global key rotation is a secrets-admin operation, NOT a dorm-admin operation.
+# Only super_admin / secrets_ops may re-encrypt all door codes under a new key.
+PERM_DORM_ACCESS_CODE_ROTATE: Final = "dorm:access_code:rotate"
 
 PERM_CHECKIN_VIEW: Final = "checkin:view"
 PERM_CHECKIN_CREATE: Final = "checkin:create"
@@ -59,6 +65,21 @@ PERMISSION_CATALOGUE: Final[dict[str, tuple[str, str, str]]] = {
     ),
     PERM_DORM_UPDATE: ("Update dormitories", "dormitory", "Edit dorm hierarchy"),
     PERM_BED_MANAGE: ("Manage beds", "dormitory", "Enable/disable beds"),
+    PERM_DORM_ACCESS_CODE_VIEW: (
+        "View room access codes",
+        "dormitory",
+        "Reveal room door access codes (sensitive)",
+    ),
+    PERM_DORM_ACCESS_CODE_UPDATE: (
+        "Update room access codes",
+        "dormitory",
+        "Set or change room door access codes (sensitive)",
+    ),
+    PERM_DORM_ACCESS_CODE_ROTATE: (
+        "Rotate access-code encryption keys",
+        "system",
+        "Global door-code key rotation (super admin / ops only)",
+    ),
     PERM_CHECKIN_VIEW: ("View check-in", "checkin", "Query check-in applications"),
     PERM_CHECKIN_CREATE: ("Create check-in", "checkin", "Create check-in applications"),
     PERM_CHECKIN_APPROVE: ("Approve check-in", "checkin", "Approve or reject applications"),
@@ -85,6 +106,8 @@ ROLE_HR: Final = "hr"
 ROLE_DORM_ADMIN: Final = "dorm_admin"
 ROLE_FINANCE_VIEWER: Final = "finance_viewer"
 ROLE_DEPT_MANAGER: Final = "dept_manager"
+# Independent ops role for secrets/key rotation (FEAT-008 review)
+ROLE_SECRETS_OPS: Final = "secrets_ops"
 
 ROLE_CATALOGUE: Final[dict[str, tuple[str, str]]] = {
     ROLE_SUPER_ADMIN: ("Super Administrator", "Full system access"),
@@ -92,6 +115,10 @@ ROLE_CATALOGUE: Final[dict[str, tuple[str, str]]] = {
     ROLE_DORM_ADMIN: ("Dormitory Administrator", "Dorm resources and occupancy workflow"),
     ROLE_FINANCE_VIEWER: ("Finance Viewer", "Read-only reports within data scope"),
     ROLE_DEPT_MANAGER: ("Department Manager", "Read-only within own department"),
+    ROLE_SECRETS_OPS: (
+        "Secrets Operations",
+        "Access-code key rotation only; no day-to-day dorm operations",
+    ),
 }
 
 # Role -> permission codes (spec §8 matrix)
@@ -116,6 +143,8 @@ ROLE_PERMISSIONS: Final[dict[str, tuple[str, ...]]] = {
         PERM_DORM_CREATE,
         PERM_DORM_UPDATE,
         PERM_BED_MANAGE,
+        PERM_DORM_ACCESS_CODE_VIEW,
+        PERM_DORM_ACCESS_CODE_UPDATE,
         PERM_CHECKIN_VIEW,
         PERM_CHECKIN_CREATE,
         PERM_CHECKIN_APPROVE,
@@ -146,6 +175,10 @@ ROLE_PERMISSIONS: Final[dict[str, tuple[str, ...]]] = {
         PERM_CHECKOUT_VIEW,
         PERM_REPORT_VIEW,
         PERM_REPORT_EXPORT,
+    ),
+    ROLE_SECRETS_OPS: (
+        PERM_DORM_ACCESS_CODE_ROTATE,
+        PERM_AUDIT_VIEW,
     ),
 }
 

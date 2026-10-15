@@ -105,9 +105,30 @@ class DormRoom(Base):
     room_no: Mapped[str] = mapped_column(String(32), nullable=False)
     room_type: Mapped[str] = mapped_column(String(32), nullable=False, default="standard")
     capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    # FEAT-008: encrypted door access code; plaintext never stored.
+    access_code_encrypted: Mapped[str | None] = mapped_column(String(512), nullable=True)
     gender_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="any")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(6), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(6), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class DormRoomType(Base):
+    """FEAT-002: custom room type catalogue. Changing type name must NOT
+    auto-change existing room capacity — capacity stays a per-room field."""
+
+    __tablename__ = "dorm_room_types"
+    __table_args__ = (UniqueConstraint("type_code", name="uq_dorm_room_types_code"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    type_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    type_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    default_capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(6), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(6), nullable=False, default=utcnow, onupdate=utcnow

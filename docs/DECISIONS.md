@@ -221,3 +221,44 @@
 - **决策**：本轮不改 `refresh_tokens` 行锁/条件更新，不在多 worker 下做扫描分布式锁；在 DEPLOYMENT.md 明确「公司内网、单 backend 实例」前提与后续条件。
 - **依据**：任务单 P2-009/010 标为条件触发/内网暂缓；避免登录机制大改与多实例架构重写。
 - **影响**：若未来上公网认证或多副本部署，须单独立项补行锁与任务调度。
+
+## D-047 BUG-007 accommodation_required 后端统一强制（V1.0.1）
+- **决策**：`assert_accommodation_required` 放在 `occupancy.py` 统一入口，覆盖申请/预留/确认/调宿/批量导入；前端过滤仅作体验层。
+- **依据**：用户 P0 要求“必须由后端统一校验，不得只做前端过滤”。
+- **影响**：已入住员工改为不需要住宿时不自动释放床位，须走退宿。
+
+## D-048 BUG-003 根因修复而非屏蔽提示（V1.0.1）
+- **决策**：删除 `floor_id=0` 非法请求；消除 `onTreeSelect`+watch 双请求；全局与局部错误改为 `notifyError` 单次通知（可 `skipErrorToast`）。
+- **依据**：任务单要求修复实际根因。
+
+## D-049 FEAT-008 门禁密码（access_code）敏感凭据（V1.0.1）
+- **决策**：`access_code_encrypted` Fernet（密钥派生自 SECRET_KEY）；字符串保留前导零；列表仅 `has_access_code`；揭示需 `dorm:access_code:view` 且审计。
+- **依据**：门禁密码（非 Wi-Fi）按敏感凭据管理；未授权不得经 API/日志/导出获取明文。
+
+## D-050 宿舍资源删除为硬删除+关联阻断（V1.0.1）
+- **决策**：无下级且无住宿/预留/调宿关联时硬删除并审计；否则 422 提示改停用（`status=disabled` 作归档）。
+- **依据**：AGENTS.md 禁止随意物理删除有历史的资源；用户要求不可删除时提供停用/归档。
+
+## D-051 批量导入逐行部分成功（V1.0.1 房间/分床）
+- **决策**：房间导入与批量分床均为逐行部分成功 + 行级原因；分床复用 checkin_service 状态机，失败行尝试取消申请。
+- **依据**：任务单“明确采用逐行部分成功或整批回滚”；与 D-038 一致。
+
+## D-052 FEAT-008 门禁密码密钥与 JWT 分离（复核补强）
+- **决策**：`ACCESS_CODE_ENCRYPTION_KEY` 为门禁密码主 Fernet 密钥，与 `SECRET_KEY`（JWT）分离；`ACCESS_CODE_LEGACY_SECRETS` 仅用于解密旧密文；密文 `v2:` 前缀；`POST /rooms/access-code/rotate` 批量重加密且不落明文。
+- **依据**：GPT Web 复核要求密钥分离与安全轮换，不得因换钥导致既有门禁密码无法解密。
+- **影响**：未配置专用钥时回退 SECRET_KEY 派生（兼容）；生产应配置独立钥并在轮换后执行 rotate。
+
+## D-053 批量分床失败恢复三级策略（复核补强）
+- **决策**：行前 rollback → `cancel_application` → 强制释放残留 active 预留；行级结果含 `recovery` 字段；策略 `partial_success_per_row`。
+- **依据**：UX-004 要求失败行不得遗留无效预留/不可追溯状态。
+- **影响**：汇总含 `recovered`；恢复动作写审计 `checkin.batch_allocate_import.recovery`。
+
+## D-054 门禁密码全局轮换权限收紧（最终安全复核）
+- **决策**：新增 `dorm:access_code:rotate` 与角色 `secrets_ops`；`POST /rooms/access-code/rotate` 仅 super_admin / secrets_ops；dorm_admin 保留单房 `view/update` 但不可全局轮换。
+- **依据**：GPT Web 第二轮要求全局轮换仅超管或独立运维角色，普通宿管/财务/人事/部门负责人不得调用。
+- **影响**：需在生产显式授予 `secrets_ops`；升级后执行 `python -m app.seed` 刷新 RBAC。
+
+## D-055 取消 HOTFIX-07B 历史数据修复（用户决定）
+- **决策**：现有库为开发测试数据；取消 C1/C5 批量修复；生产全新空库部署；保留 HOTFIX-07A 与全部测试。
+- **依据**：用户最终确认测试数据不进入生产。
+- **影响**：HOTFIX-07B 标记为「范围取消」；调宿锁序风险保留至正式验收前专项测试。

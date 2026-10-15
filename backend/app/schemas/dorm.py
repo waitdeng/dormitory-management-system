@@ -214,6 +214,8 @@ class RoomBase(BaseModel):
 class RoomCreate(RoomBase):
     bed_count: int | None = Field(default=None, ge=0, le=20)
     bed_no_prefix: str = Field(default="B", max_length=8)
+    # FEAT-008: door access code as string (preserve leading zeros)
+    access_code: str | None = Field(default=None, max_length=64)
 
 
 class RoomUpdate(BaseModel):
@@ -224,6 +226,8 @@ class RoomUpdate(BaseModel):
     gender_policy: str | None = None
     status: str | None = None
     description: str | None = Field(default=None, max_length=2000)
+    # FEAT-008: set/replace door code; explicit null clears it
+    access_code: str | None = Field(default=None, max_length=64)
 
     @field_validator("gender_policy")
     @classmethod
@@ -251,6 +255,47 @@ class RoomOut(BaseModel):
     description: str | None = None
     bed_count: int = 0
     active_bed_count: int = 0
+    # FEAT-008: never expose plaintext here
+    has_access_code: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RoomAccessCodeOut(BaseModel):
+    """Only returned from the dedicated reveal endpoint with permission."""
+
+    room_id: int
+    access_code: str | None = None
+
+
+class RoomTypeBase(BaseModel):
+    type_code: str = Field(min_length=1, max_length=32)
+    type_name: str = Field(min_length=1, max_length=64)
+    default_capacity: int = Field(default=4, ge=1, le=20)
+    description: str | None = Field(default=None, max_length=2000)
+    status: str = Field(default="active")
+
+
+class RoomTypeCreate(RoomTypeBase):
+    pass
+
+
+class RoomTypeUpdate(BaseModel):
+    type_name: str | None = Field(default=None, min_length=1, max_length=64)
+    default_capacity: int | None = Field(default=None, ge=1, le=20)
+    description: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+
+
+class RoomTypeOut(BaseModel):
+    id: int
+    type_code: str
+    type_name: str
+    default_capacity: int
+    description: str | None = None
+    status: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -308,6 +353,12 @@ class BedOut(BaseModel):
     occupied: bool = False
     reserved: bool = False
     available: bool = True
+    # BUG-005: full location path for pickers (区域/楼/层/房间/床位)
+    area_name: str | None = None
+    building_name: str | None = None
+    floor_no: int | None = None
+    room_no: str | None = None
+    bed_path: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

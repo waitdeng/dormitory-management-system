@@ -129,21 +129,22 @@ test.describe('M6 P0-2 真实分床流程', () => {
     await login(page)
     await openAllocation(page, code)
 
-    // select employee
-    await page.getByRole('button', { name: '选择员工' }).click()
-    await page.getByPlaceholder('工号 / 姓名').fill(employee.employee_no)
-    await page.getByPlaceholder('工号 / 姓名').press('Enter')
-    await page.getByRole('cell', { name: employee.employee_no }).first().click()
-    await expect(page.locator('.emp-line', { hasText: employee.full_name })).toBeVisible()
-
-    // free bed is clickable and labeled 空闲
+    // UX-012: click free bed first — dialog opens with target bed path
     const freeBedBtn = page.getByRole('button', { name: new RegExp(`${freeBedNo}.*空闲`) })
     await expect(freeBedBtn).toBeEnabled()
-
-    // allocate
     await freeBedBtn.click()
-    await expect(page.getByText('确认分床')).toBeVisible()
-    await page.getByRole('button', { name: /^OK$/ }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('dialog').getByText(/目标床位/)).toBeVisible()
+
+    // pick employee inside dialog, then confirm once
+    await page.getByPlaceholder('姓名 / 工号 / 部门搜索').fill(employee.employee_no)
+    await page.getByRole('button', { name: '搜索' }).click()
+    await page.getByRole('cell', { name: employee.employee_no }).first().click()
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: '确认分配' })
+      .first()
+      .click()
 
     await expect(page.getByText('分配成功')).toBeVisible({ timeout: 15_000 })
 
@@ -184,11 +185,7 @@ test.describe('M6 P0-2 真实分床流程', () => {
     await login(page)
     await openAllocation(page, code)
 
-    await page.getByRole('button', { name: '选择员工' }).click()
-    await page.getByPlaceholder('工号 / 姓名').fill(employee.employee_no)
-    await page.getByPlaceholder('工号 / 姓名').press('Enter')
-    await page.getByRole('cell', { name: employee.employee_no }).first().click()
-
+    // UX-012: disabled beds stay non-clickable without selecting employee first
     const disabledBed = page.getByRole('button', {
       name: new RegExp(`${beds[1].bed_no}.*停用`),
     })
@@ -234,11 +231,6 @@ test.describe('M6 P0-2 真实分床流程', () => {
     await login(page)
     await openAllocation(page, code)
 
-    await page.getByRole('button', { name: '选择员工' }).click()
-    await page.getByPlaceholder('工号 / 姓名').fill(employee.employee_no)
-    await page.getByPlaceholder('工号 / 姓名').press('Enter')
-    await page.getByRole('cell', { name: employee.employee_no }).first().click()
-
     // Another admin claims the bed via API after UI shows it free (race)
     const otherEmp = await request.post(`${BASE}/api/v1/employees`, {
       headers: auth(token),
@@ -270,7 +262,15 @@ test.describe('M6 P0-2 真实分床流程', () => {
     })
     await expect(freeBedBtn).toBeEnabled()
     await freeBedBtn.click()
-    await page.getByRole('button', { name: /^OK$/ }).click()
+    await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByPlaceholder('姓名 / 工号 / 部门搜索').fill(employee.employee_no)
+    await page.getByRole('button', { name: '搜索' }).click()
+    await page.getByRole('cell', { name: employee.employee_no }).first().click()
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: '确认分配' })
+      .first()
+      .click()
 
     // explicit conflict message + refresh to occupied/reserved
     await expect(

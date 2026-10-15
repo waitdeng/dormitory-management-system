@@ -61,6 +61,102 @@ def _app_out(app: AccommodationApplication, employee: Employee | None = None) ->
     return data
 
 
+def _bed_chain_dict(chain: dict) -> dict:
+    """Unified bed display: 区域 / 楼栋 / 楼层 / 房间号 / 床位号."""
+    bed = chain["bed"]
+    room = chain["room"]
+    floor = chain["floor"]
+    building = chain["building"]
+    area = chain["area"]
+    bed_path = "/".join(
+        str(p)
+        for p in (area.area_name, building.building_name, floor.floor_no, room.room_no, bed.bed_no)
+        if p is not None
+    )
+    return {
+        "id": bed.id,
+        "bed_no": bed.bed_no,
+        "room_no": room.room_no,
+        "floor_no": floor.floor_no,
+        "building_name": building.building_name,
+        "area_name": area.area_name,
+        "bed_path": bed_path,
+    }
+
+
+async def _resolve_app_bed_id(db: AsyncSession, app: AccommodationApplication) -> int | None:
+    """Business display rule (HOTFIX-06):
+    1) active accommodation bed (post-transfer current bed wins)
+    2) active reservation bed (已预留)
+    3) historical assigned/ended bed for 已入住 traceability
+    4) None → UI shows 未分配 (approved without reservation)
+    """
+    from sqlalchemy import select as _select
+
+    acc = (
+        await db.execute(
+            _select(AccommodationRecord)
+            .where(
+                AccommodationRecord.application_id == app.id,
+                AccommodationRecord.status == "active",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if acc is not None and acc.bed_id is not None:
+        return acc.bed_id
+
+    res = (
+        await db.execute(
+            _select(BedReservation)
+            .where(
+                BedReservation.application_id == app.id,
+                BedReservation.status == "active",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if res is not None:
+        return res.bed_id
+
+    # 已预留 / 已批准 without active reservation → 未分配
+    # (assigned_bed_id alone is not a current assignment)
+    if app.status in {"reserved", "approved"}:
+        return None
+
+    # 已入住: keep historical path (ended acc / assigned bed) for audit trail
+    if app.status == "checked_in":
+        ended = (
+            await db.execute(
+                _select(AccommodationRecord)
+                .where(
+                    AccommodationRecord.application_id == app.id,
+                    AccommodationRecord.bed_id.is_not(None),
+                )
+                .order_by(AccommodationRecord.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if ended is not None:
+            return ended.bed_id
+        return app.assigned_bed_id
+
+    return app.assigned_bed_id
+
+
+async def _attach_bed(db: AsyncSession, data: dict, app: AccommodationApplication) -> dict:
+    bed_id = await _resolve_app_bed_id(db, app)
+    if bed_id is None:
+        data["bed"] = None
+        return data
+    try:
+        chain = await occ.load_bed_chain(db, bed_id)
+        data["bed"] = _bed_chain_dict(chain)
+    except Exception:  # noqa: BLE001 — never break list rendering
+        data["bed"] = None
+    return data
+
+
 def _res_out(res: BedReservation) -> dict:
     return {
         "id": res.id,
@@ -101,7 +197,23 @@ def _acc_out(rec: AccommodationRecord, employee: Employee | None = None) -> dict
     return data
 
 
-async def _load_app(db: AsyncSession, app_id: int) -> AccommodationApplication:
+async def _peek_app(db: AsyncSession, app_id: int) -> AccommodationApplication:
+    """Load application WITHOUT lock (for lock-ordering only).
+
+    HOTFIX-07A: never take the application row lock before employee/bed locks.
+    """
+    app = (
+        await db.execute(
+            select(AccommodationApplication).where(AccommodationApplication.id == app_id)
+        )
+    ).scalar_one_or_none()
+    if app is None:
+        raise ResourceNotFound(f"Check-in application {app_id} not found")
+    return app
+
+
+async def _lock_app(db: AsyncSession, app_id: int) -> AccommodationApplication:
+    """Lock application AFTER employee+bed locks (AGENTS.md lock order)."""
     app = (
         await db.execute(
             select(AccommodationApplication)
@@ -112,6 +224,11 @@ async def _load_app(db: AsyncSession, app_id: int) -> AccommodationApplication:
     if app is None:
         raise ResourceNotFound(f"Check-in application {app_id} not found")
     return app
+
+
+async def _load_app(db: AsyncSession, app_id: int) -> AccommodationApplication:
+    """Backward-compatible alias — prefer _peek_app + _lock_app in write paths."""
+    return await _peek_app(db, app_id)
 
 
 async def _load_emp(db: AsyncSession, employee_id: int) -> Employee:
@@ -179,7 +296,12 @@ async def list_applications(
         ids = {r.employee_id for r in rows}
         for e in (await db.execute(select(Employee).where(Employee.id.in_(ids)))).scalars():
             emp_map[e.id] = e
-    return [_app_out(r, emp_map.get(r.employee_id)) for r in rows], total
+    items = []
+    for r in rows:
+        item = _app_out(r, emp_map.get(r.employee_id))
+        item = await _attach_bed(db, item, r)
+        items.append(item)
+    return items, total
 
 
 async def get_application(db: AsyncSession, app_id: int) -> dict:
@@ -192,15 +314,7 @@ async def get_application(db: AsyncSession, app_id: int) -> dict:
         raise ResourceNotFound(f"Check-in application {app_id} not found")
     emp = await _load_emp(db, app.employee_id)
     data = _app_out(app, emp)
-    if app.assigned_bed_id:
-        chain = await occ.load_bed_chain(db, app.assigned_bed_id)
-        data["bed"] = {
-            "id": chain["bed"].id,
-            "bed_no": chain["bed"].bed_no,
-            "room_no": chain["room"].room_no,
-            "building_name": chain["building"].building_name,
-            "area_name": chain["area"].area_name,
-        }
+    data = await _attach_bed(db, data, app)
     res = (
         await db.execute(
             select(BedReservation).where(
@@ -251,7 +365,8 @@ async def create_application(
             return await get_application(db, existing.id)
 
     emp = await occ.lock_employee(db, employee_id)
-    await occ.assert_employee_available_for_checkin(db, employee_id)
+    occ.assert_eligible_for_new_checkin(emp)
+    await occ.assert_employee_available_for_checkin(db, employee_id, employee=emp)
 
     open_app = await occ.open_application_for_employee(db, employee_id)
     if open_app is not None:
@@ -361,7 +476,11 @@ async def reserve_bed(
     actor_user_id: int | None = None,
     request_id: str | None = None,
 ) -> dict:
-    app = await _load_app(db, app_id)
+    peek = await _peek_app(db, app_id)
+    emp = await occ.lock_employee(db, peek.employee_id)
+    await occ.lock_beds(db, [bed_id])
+    app = await _lock_app(db, app_id)
+
     if app.status == "reserved" and app.assigned_bed_id == bed_id:
         return await get_application(db, app_id)  # idempotent same-bed reserve
     if app.status not in ("approved", "pending"):
@@ -373,8 +492,6 @@ async def reserve_bed(
     if app.status == "pending":
         raise ConflictError("Application must be approved before reserving a bed")
 
-    emp = await occ.lock_employee(db, app.employee_id)
-    await occ.lock_beds(db, [bed_id])
     chain = await occ.load_bed_chain(db, bed_id)
     occ.assert_hierarchy_allocatable(chain)
     occ.assert_gender_policy(chain, emp)
@@ -396,8 +513,9 @@ async def reserve_bed(
         prev.released_at = utcnow()
         prev.release_reason = "re-reserved to another bed"
 
+    occ.assert_eligible_for_new_checkin(emp)
     await occ.assert_bed_free_for(db, bed_id, employee_id=emp.id)
-    await occ.assert_employee_available_for_checkin(db, emp.id)
+    await occ.assert_employee_available_for_checkin(db, emp.id, employee=emp)
 
 
     res = BedReservation(
@@ -445,7 +563,12 @@ async def confirm_checkin(
     request_id: str | None = None,
 ) -> dict:
 
-    app = await _load_app(db, app_id)
+    peek = await _peek_app(db, app_id)
+    peek_bed = peek.assigned_bed_id
+    emp = await occ.lock_employee(db, peek.employee_id)
+    if peek_bed:
+        await occ.lock_beds(db, [peek_bed])
+    app = await _lock_app(db, app_id)
 
     # Idempotent: already checked in — return existing state, no second record.
     if app.status == "checked_in":
@@ -456,8 +579,8 @@ async def confirm_checkin(
         raise BusinessRuleError("Application has no assigned bed")
 
     bed_id = app.assigned_bed_id
-    emp = await occ.lock_employee(db, app.employee_id)
-    await occ.lock_beds(db, [bed_id])
+    if not peek_bed or peek_bed != bed_id:
+        await occ.lock_beds(db, [bed_id])
 
     res = (
         await db.execute(
@@ -470,6 +593,22 @@ async def confirm_checkin(
         )
     ).scalars().first()
     if res is None:
+        # HOTFIX-07A: concurrent duplicate confirm may observe the reservation
+        # already consumed by the peer transaction. Treat as idempotent success
+        # when this application already produced an active accommodation.
+        existing_acc = (
+            await db.execute(
+                select(AccommodationRecord)
+                .where(
+                    AccommodationRecord.application_id == app.id,
+                    AccommodationRecord.status == "active",
+                )
+                .with_for_update()
+            )
+        ).scalars().first()
+        if existing_acc is not None:
+            app.status = "checked_in"
+            return await get_application(db, app_id)
         raise ConflictError("No active reservation found for this application")
 
     # DMS-P1-004: a reservation past expires_at is logically invalid even if
@@ -480,10 +619,11 @@ async def confirm_checkin(
             f"re-reserve a bed before confirming check-in"
         )
 
+    occ.assert_eligible_for_new_checkin(emp)
     await occ.assert_bed_free_for(
         db, bed_id, employee_id=emp.id, ignore_reservation_id=res.id
     )
-    await occ.assert_employee_available_for_checkin(db, emp.id)
+    await occ.assert_employee_available_for_checkin(db, emp.id, employee=emp)
 
     rec = AccommodationRecord(
         employee_id=emp.id,
@@ -560,14 +700,18 @@ async def cancel_application(
     request_id: str | None = None,
 ) -> dict:
 
-    app = await _load_app(db, app_id)
+    peek = await _peek_app(db, app_id)
+    emp = await occ.lock_employee(db, peek.employee_id)
+    if peek.assigned_bed_id:
+        await occ.lock_beds(db, [peek.assigned_bed_id])
+    app = await _lock_app(db, app_id)
     if app.status == "cancelled":
         return await get_application(db, app_id)
     if app.status not in OPEN_STATUSES:
         raise ConflictError(f"Cannot cancel application in status '{app.status}'")
 
     # lock reservation if any, then release
-    if app.assigned_bed_id:
+    if app.assigned_bed_id and app.assigned_bed_id != peek.assigned_bed_id:
         await occ.lock_beds(db, [app.assigned_bed_id])
     res = (
         await db.execute(

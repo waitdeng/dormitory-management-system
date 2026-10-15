@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=14)
     JWT_ALGORITHM: str = Field(default="HS256")
 
+    # FEAT-008 remediation: door access-code encryption key SEPARATE from JWT SECRET_KEY.
+    # - ACCESS_CODE_ENCRYPTION_KEY: Fernet key (urlsafe base64, 32 bytes).
+    #   If empty, falls back to a key derived from SECRET_KEY for backward compatibility.
+    # - ACCESS_CODE_LEGACY_SECRETS: comma-separated legacy secrets used ONLY for decrypt.
+    #   Use the literal token "SECRET_KEY" to include the JWT secret as a legacy source.
+    #   Older ciphertexts remain readable; new writes use the primary key.
+    ACCESS_CODE_ENCRYPTION_KEY: str = Field(default="")
+    ACCESS_CODE_LEGACY_SECRETS: str = Field(default="")
+
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://localhost:8080"])
 
     # Bootstrap admin (used only by init_admin script / first boot seed)

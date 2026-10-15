@@ -525,6 +525,52 @@ async def report_exceptions(
 
 _EXPORT_MAX = 5000
 
+# UX-006: business-facing Chinese labels. Backend codes stay unchanged.
+EMPLOYMENT_STATUS_LABELS = {
+    "pending": "待入职",
+    "active": "在职",
+    "probation": "试用期",
+    "offboarding": "离职办理中",
+    "terminated": "已离职",
+    "resigned": "已离职",
+    "suspended": "停职",
+}
+BED_STATUS_LABELS = {
+    "active": "可用",
+    "maintenance": "维修",
+    "disabled": "停用",
+}
+TRANSFER_STATUS_LABELS = {
+    "pending": "待处理",
+    "reserved": "已预留目标床",
+    "completed": "已完成",
+    "cancelled": "已取消",
+}
+ALERT_SEVERITY_LABELS = {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "critical": "紧急",
+}
+
+
+def _emp_status_label(code: str | None) -> str | None:
+    if code is None:
+        return None
+    return EMPLOYMENT_STATUS_LABELS.get(code, code)
+
+
+def _bed_status_label(code: str | None) -> str | None:
+    if code is None:
+        return None
+    return BED_STATUS_LABELS.get(code, code)
+
+
+def _transfer_status_label(code: str | None) -> str | None:
+    if code is None:
+        return None
+    return TRANSFER_STATUS_LABELS.get(code, code)
+
 
 async def export_report(
     db: AsyncSession,
@@ -570,7 +616,7 @@ async def export_report(
                 [
                     i["employee_no"],
                     i["employee_name"],
-                    i["employment_status"],
+                    _emp_status_label(i["employment_status"]),
                     i["gender"],
                     i["department_code"],
                     i["department_name"],
@@ -602,7 +648,7 @@ async def export_report(
                     i["floor_no"],
                     i["room_no"],
                     i["bed_no"],
-                    i["operational_status"],
+                    _bed_status_label(i["operational_status"]),
                 ]
                 for i in items
             ],
@@ -641,7 +687,7 @@ async def export_report(
             ],
             [
                 [
-                    i["event_type"],
+                    _event_type_label(i["event_type"]),
                     i["event_at"].isoformat() if i["event_at"] else None,
                     i["employee_no"],
                     i["employee_name"],
@@ -686,7 +732,7 @@ async def export_report(
                     i["department_name"],
                     _fmt_loc(i["old_location"]),
                     _fmt_loc(i["new_location"]),
-                    i["status"],
+                    _transfer_status_label(i["status"]),
                     i["reason"],
                     i["created_at"].isoformat() if i["created_at"] else None,
                     i["completed_at"].isoformat() if i["completed_at"] else None,
@@ -708,8 +754,8 @@ async def export_report(
             ["预警类型", "严重级别", "工号", "姓名", "部门", "标题", "详情", "状态", "发现时间"],
             [
                 [
-                    i["alert_type"],
-                    i["severity"],
+                    _alert_type_label(i["alert_type"]),
+                    ALERT_SEVERITY_LABELS.get(i["severity"], i["severity"]),
                     i["employee_no"],
                     i["employee_name"],
                     i["department_name"],
@@ -727,7 +773,39 @@ async def export_report(
     return buf.getvalue()
 
 
+EVENT_TYPE_LABELS = {
+    "checkin": "入住",
+    "checkout": "退宿",
+    "transfer": "调宿",
+}
+ALERT_TYPE_LABELS = {
+    "terminated_still_housed": "离职未退宿",
+    "overdue_checkin": "超期未入住",
+    "overdue_checkout": "超期未退宿",
+    "reservation_expired": "预留已过期",
+}
+
+
+def _event_type_label(code: str | None) -> str | None:
+    if code is None:
+        return None
+    return EVENT_TYPE_LABELS.get(code, code)
+
+
+def _alert_type_label(code: str | None) -> str | None:
+    if code is None:
+        return None
+    return ALERT_TYPE_LABELS.get(code, code)
+
+
 def _fmt_loc(loc: dict | None) -> str:
     if not loc:
         return ""
-    return f"{loc.get('building_name', '')}/{loc.get('room_no', '')}/{loc.get('bed_no', '')}"
+    parts = [
+        loc.get("area_name"),
+        loc.get("building_name"),
+        loc.get("floor_no"),
+        loc.get("room_no"),
+        loc.get("bed_no"),
+    ]
+    return "/".join(str(p) for p in parts if p not in (None, ""))

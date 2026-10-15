@@ -22,6 +22,48 @@ import type {
 } from '@/types'
 
 const auth = useAuthStore()
+const employmentStatusLabel: Record<string, string> = {
+  pending: '待入职',
+  active: '在职',
+  probation: '试用期',
+  offboarding: '离职办理中',
+  terminated: '已离职',
+  resigned: '已离职',
+  suspended: '停职',
+}
+const bedStatusLabel: Record<string, string> = {
+  active: '可用',
+  maintenance: '维修',
+  disabled: '停用',
+}
+const transferStatusLabel: Record<string, string> = {
+  pending: '待处理',
+  reserved: '已预留目标床',
+  completed: '已完成',
+  cancelled: '已取消',
+}
+const alertTypeLabel: Record<string, string> = {
+  terminated_still_housed: '离职未退宿',
+  overdue_checkin: '超期未入住',
+  overdue_checkout: '超期未退宿',
+  reservation_expired: '预留已过期',
+}
+const severityLabel: Record<string, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+  critical: '紧急',
+}
+const eventLabel: Record<string, string> = {
+  checkin: '入住',
+  checkout: '退宿',
+  transfer: '调宿',
+}
+function labelOf(map: Record<string, string>, key?: string | null): string {
+  if (!key) return '—'
+  return map[key] || key
+}
+
 const activeTab = ref('accommodations')
 const loading = ref(false)
 const exporting = ref(false)
@@ -136,7 +178,9 @@ async function doExport() {
 
 function fmtLoc(loc: Record<string, string | number | null> | null | undefined): string {
   if (!loc) return '—'
-  return `${loc.building_name || ''}/${loc.room_no || ''}/${loc.bed_no || ''}`
+  return [loc.area_name, loc.building_name, loc.floor_no != null ? `${loc.floor_no}F` : null, loc.room_no, loc.bed_no]
+    .filter((p) => p != null && p !== '')
+    .join('/')
 }
 
 watch(activeTab, () => {
@@ -206,7 +250,9 @@ onMounted(() => void load())
           <el-table-column prop="employee_no" label="工号" width="120" />
           <el-table-column prop="employee_name" label="姓名" width="110" />
           <el-table-column prop="department_name" label="部门" width="140" />
-          <el-table-column prop="employment_status" label="人事状态" width="110" />
+          <el-table-column prop="employment_status" label="人事状态" width="110">
+            <template #default="{ row }">{{ labelOf(employmentStatusLabel, row.employment_status) }}</template>
+          </el-table-column>
           <el-table-column prop="building_name" label="楼栋" width="120" />
           <el-table-column prop="room_no" label="房间" width="90" />
           <el-table-column prop="bed_no" label="床位" width="90" />
@@ -220,7 +266,9 @@ onMounted(() => void load())
           <el-table-column prop="floor_no" label="楼层" width="80" />
           <el-table-column prop="room_no" label="房间" width="100" />
           <el-table-column prop="bed_no" label="床位" width="100" />
-          <el-table-column prop="operational_status" label="状态" width="100" />
+          <el-table-column prop="operational_status" label="状态" width="100">
+            <template #default="{ row }">{{ labelOf(bedStatusLabel, row.operational_status) }}</template>
+          </el-table-column>
         </template>
         <template v-else-if="activeTab === 'departments'">
           <el-table-column prop="department_code" label="部门编码" width="140" />
@@ -231,7 +279,7 @@ onMounted(() => void load())
         </template>
         <template v-else-if="activeTab === 'checkin-checkout'">
           <el-table-column prop="event_type" label="事件" width="90">
-            <template #default="{ row }">{{ row.event_type === 'checkin' ? '入住' : '退宿' }}</template>
+            <template #default="{ row }">{{ labelOf(eventLabel, row.event_type) }}</template>
           </el-table-column>
           <el-table-column prop="event_at" label="时间" min-width="160">
             <template #default="{ row }">{{ (row.event_at || '').replace('T', ' ') }}</template>
@@ -253,16 +301,24 @@ onMounted(() => void load())
           <el-table-column label="新床位" min-width="160">
             <template #default="{ row }">{{ fmtLoc(row.new_location) }}</template>
           </el-table-column>
-          <el-table-column prop="status" label="状态" width="100" />
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">{{ labelOf(transferStatusLabel, row.status) }}</template>
+          </el-table-column>
           <el-table-column prop="reason" label="原因" min-width="120" />
         </template>
         <template v-else>
-          <el-table-column prop="alert_type" label="类型" width="150" />
-          <el-table-column prop="severity" label="级别" width="90" />
+          <el-table-column prop="alert_type" label="类型" width="150">
+            <template #default="{ row }">{{ labelOf(alertTypeLabel, row.alert_type) }}</template>
+          </el-table-column>
+          <el-table-column prop="severity" label="级别" width="90">
+            <template #default="{ row }">{{ labelOf(severityLabel, row.severity) }}</template>
+          </el-table-column>
           <el-table-column prop="employee_no" label="工号" width="120" />
           <el-table-column prop="employee_name" label="姓名" width="110" />
           <el-table-column prop="title" label="标题" min-width="180" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column prop="status" label="状态" width="90">
+            <template #default="{ row }">{{ row.status === 'open' ? '未关闭' : row.status === 'resolved' ? '已解除' : row.status }}</template>
+          </el-table-column>
           <el-table-column prop="detected_at" label="发现时间" min-width="160">
             <template #default="{ row }">{{ (row.detected_at || '').replace('T', ' ') }}</template>
           </el-table-column>

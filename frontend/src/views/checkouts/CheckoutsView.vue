@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
   cancelCheckout,
   completeCheckout,
@@ -81,7 +81,7 @@ async function load(): Promise<void> {
     rows.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -110,7 +110,7 @@ async function onSubmit(): Promise<void> {
       createVisible.value = false
       await load()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -133,7 +133,7 @@ async function onInspect(): Promise<void> {
     inspectVisible.value = false
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -143,7 +143,7 @@ async function onComplete(row: CheckoutRecordOut): Promise<void> {
     ElMessage.success('退宿已完成，床位已释放')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -153,7 +153,7 @@ async function onCancel(row: CheckoutRecordOut): Promise<void> {
     ElMessage.success('已取消')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 

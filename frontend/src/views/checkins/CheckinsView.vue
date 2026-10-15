@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
   approveCheckinApplication,
   cancelCheckinApplication,
@@ -79,7 +79,7 @@ async function load(): Promise<void> {
     rows.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -108,7 +108,7 @@ async function onSubmit(): Promise<void> {
       createVisible.value = false
       await load()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -119,7 +119,7 @@ async function onApprove(row: CheckinApplicationOut): Promise<void> {
     ElMessage.success('已批准')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -129,7 +129,7 @@ async function onReject(row: CheckinApplicationOut): Promise<void> {
     ElMessage.success('已驳回')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -140,7 +140,7 @@ async function openReserve(row: CheckinApplicationOut): Promise<void> {
   try {
     beds.value = await listAvailableBeds({ limit: 200 })
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
     beds.value = []
   }
 }
@@ -156,7 +156,7 @@ async function onReserve(): Promise<void> {
     reserveVisible.value = false
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -166,7 +166,7 @@ async function onConfirm(row: CheckinApplicationOut): Promise<void> {
     ElMessage.success('已确认入住')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -176,14 +176,19 @@ async function onCancel(row: CheckinApplicationOut): Promise<void> {
     ElMessage.success('已取消')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
 onMounted(async () => {
   await load()
   try {
-    const data = await listEmployees({ page: 1, page_size: 100 })
+    // BUG-007: only employees who require accommodation can apply for check-in
+    const data = await listEmployees({
+      page: 1,
+      page_size: 100,
+      accommodation_required: true,
+    })
     employees.value = data.items
   } catch {
     employees.value = []
@@ -226,7 +231,7 @@ onMounted(async () => {
       <el-table-column prop="application_type" label="类型" width="90" />
       <el-table-column label="床位" min-width="140">
         <template #default="{ row }">
-          <span v-if="row.bed">{{ row.bed.building_name }} / {{ row.bed.room_no }} / {{ row.bed.bed_no }}</span>
+          <span v-if="row.bed">{{ row.bed.bed_path || [row.bed.area_name, row.bed.building_name, row.bed.floor_no != null ? `${row.bed.floor_no}F` : null, row.bed.room_no, row.bed.bed_no].filter(Boolean).join('/') }}</span>
           <span v-else class="muted">未分配</span>
         </template>
       </el-table-column>

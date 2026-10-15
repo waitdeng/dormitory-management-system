@@ -1,24 +1,53 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
+  commitRoomImport,
   createArea,
   createBed,
   createBuilding,
   createFloor,
   createRoom,
+  createRoomType,
+  deleteDormResource,
+  disableRoomType,
+  downloadRoomImportTemplate,
   fetchDormTree,
+  fetchRoom,
   listRoomBeds,
   listRooms,
+  listRoomTypes,
+  previewRoomImport,
+  revealRoomAccessCode,
+  setRoomAccessCode,
   setBedStatus,
+  updateBed,
+  deleteRoomType,
   updateArea,
   updateBuilding,
   updateFloor,
   updateRoom,
+  updateRoomType,
 } from '@/api/dormitories'
 import type { BedOut, DormTreeNode, RoomOut } from '@/types'
+
+type RoomTypeRow = {
+  id: number
+  type_code: string
+  type_name: string
+  default_capacity: number
+  description: string | null
+  status: string
+}
+
+type ImportRow = {
+  row: number
+  action: string
+  message: string | null
+  data: Record<string, unknown>
+}
 
 const auth = useAuthStore()
 const treeData = ref<DormTreeNode[]>([])
@@ -129,7 +158,7 @@ async function loadTree(): Promise<void> {
   try {
     treeData.value = await fetchDormTree(true)
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     treeLoading.value = false
   }
@@ -149,22 +178,9 @@ function onNodeClick(node: DormTreeNode): void {
   } else if (node.node_type === 'area') {
     void loadRooms({})
   } else if (node.node_type === 'room') {
-    const room: RoomOut = {
-      id: node.id,
-      floor_id: 0,
-      room_no: node.code,
-      room_type: 'standard',
-      capacity: Number(node.extra.capacity ?? 0),
-      gender_policy: String(node.extra.gender_policy ?? 'any'),
-      status: node.status,
-      description: null,
-      bed_count: Number(node.extra.bed_count ?? 0),
-      active_bed_count: Number(node.extra.active_bed_count ?? 0),
-      created_at: null,
-      updated_at: null,
-    }
-    void openBeds(room)
-    void loadRooms({ floor_id: 0 })
+    // BUG-003: fetch the real room then open beds. Never send floor_id=0
+    // (backend Query ge=1 rejects it with 422 "Request validation failed").
+    void openBedsForNode(node)
   }
 }
 
@@ -183,7 +199,7 @@ async function loadRooms(params: {
     rooms.value = data.items
     roomTotal.value = data.total
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     roomsLoading.value = false
   }
@@ -227,7 +243,7 @@ async function onAreaSubmit(): Promise<void> {
       areaDialogVisible.value = false
       await loadTree()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -303,9 +319,21 @@ async function onBuildingSubmit(): Promise<void> {
       buildingDialogVisible.value = false
       await loadTree()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
+}
+
+function openFloorEdit(node: DormTreeNode): void {
+  floorEditingId.value = node.id
+  Object.assign(floorForm, {
+    building_id: undefined, // keep existing building; not editable here
+    floor_no: Number(node.code) || 1,
+    floor_name: node.name,
+    gender_policy: String(node.extra.gender_policy ?? 'any'),
+    status: node.status,
+  })
+  floorDialogVisible.value = true
 }
 
 function openFloorCreate(): void {
@@ -325,24 +353,28 @@ async function onFloorSubmit(): Promise<void> {
   await floorFormRef.value.validate(async (valid) => {
     if (!valid) return
     try {
-      const payload = {
-        building_id: floorForm.building_id!,
-        floor_no: floorForm.floor_no,
-        floor_name: floorForm.floor_name || null,
-        gender_policy: floorForm.gender_policy,
-        status: floorForm.status,
-      }
       if (floorEditingId.value == null) {
-        await createFloor(payload)
+        await createFloor({
+          building_id: floorForm.building_id!,
+          floor_no: floorForm.floor_no,
+          floor_name: floorForm.floor_name || null,
+          gender_policy: floorForm.gender_policy,
+          status: floorForm.status,
+        })
         ElMessage.success('楼层已创建')
       } else {
-        await updateFloor(floorEditingId.value, payload)
+        await updateFloor(floorEditingId.value, {
+          floor_no: floorForm.floor_no,
+          floor_name: floorForm.floor_name || null,
+          gender_policy: floorForm.gender_policy,
+          status: floorForm.status,
+        })
         ElMessage.success('楼层已更新')
       }
       floorDialogVisible.value = false
       await loadTree()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -360,6 +392,15 @@ function openRoomCreate(): void {
     bed_no_prefix: 'B',
   })
   roomDialogVisible.value = true
+}
+
+async function openRoomEditFromNode(node: DormTreeNode): Promise<void> {
+  try {
+    const room = await fetchRoom(node.id)
+    openRoomEdit(room)
+  } catch (error) {
+    notifyError(error, '加载房间详情失败')
+  }
 }
 
 function openRoomEdit(row: RoomOut): void {
@@ -410,9 +451,18 @@ async function onRoomSubmit(): Promise<void> {
         await loadRooms({ floor_id: selectedNode.value.id })
       }
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
+}
+
+async function openBedsForNode(node: DormTreeNode): Promise<void> {
+  try {
+    const room = await fetchRoom(node.id)
+    await openBeds(room)
+  } catch (error) {
+    notifyError(error, '加载房间详情失败')
+  }
 }
 
 async function openBeds(row: RoomOut): Promise<void> {
@@ -422,13 +472,46 @@ async function openBeds(row: RoomOut): Promise<void> {
   try {
     beds.value = await listRoomBeds(row.id)
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     bedsLoading.value = false
   }
 }
 
+const bedEditingId = ref<number | null>(null)
+
+function openBedEdit(row: BedOut): void {
+  bedEditingId.value = row.id
+  Object.assign(bedForm, {
+    bed_no: row.bed_no,
+    operational_status: row.operational_status,
+    description: row.description ?? '',
+  })
+  bedCreateDialogVisible.value = true
+}
+
+async function onDeleteBed(row: BedOut): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确定删除床位 ${row.bed_no} 吗？存在业务关联时将无法删除。`, '二次确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteDormResource('bed', row.id)
+    ElMessage.success('床位已删除')
+    if (bedRoom.value) beds.value = await listRoomBeds(bedRoom.value.id)
+    await loadTree()
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
 function openBedCreate(): void {
+  bedEditingId.value = null
   Object.assign(bedForm, { bed_no: '', operational_status: 'active', description: '' })
   bedCreateDialogVisible.value = true
 }
@@ -438,17 +521,25 @@ async function onBedSubmit(): Promise<void> {
   await bedFormRef.value.validate(async (valid) => {
     if (!valid) return
     try {
-      await createBed(bedRoom.value!.id, {
-        bed_no: bedForm.bed_no,
-        operational_status: bedForm.operational_status,
-        description: bedForm.description || null,
-      })
-      ElMessage.success('床位已创建')
+      if (bedEditingId.value == null) {
+        await createBed(bedRoom.value!.id, {
+          bed_no: bedForm.bed_no,
+          operational_status: bedForm.operational_status,
+          description: bedForm.description || null,
+        })
+        ElMessage.success('床位已创建')
+      } else {
+        await updateBed(bedEditingId.value, {
+          bed_no: bedForm.bed_no,
+          description: bedForm.description || null,
+        })
+        ElMessage.success('床位已更新')
+      }
       bedCreateDialogVisible.value = false
       beds.value = await listRoomBeds(bedRoom.value!.id)
       await loadTree()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -462,13 +553,309 @@ async function onBedAction(bed: BedOut, action: 'enable' | 'disable' | 'maintena
     }
     await loadTree()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
+  }
+}
+
+async function onDeleteNode(node: DormTreeNode): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${node.name}」吗？存在业务关联时将无法删除。`,
+      '二次确认删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteDormResource(node.node_type as 'area' | 'building' | 'floor' | 'room', node.id)
+    ElMessage.success('已删除')
+    selectedNode.value = null
+    await loadTree()
+    await loadRooms({})
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onDeleteRoom(row: RoomOut): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确定删除房间 ${row.room_no} 吗？`, '二次确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteDormResource('room', row.id)
+    ElMessage.success('已删除')
+    await loadRooms(
+      selectedNode.value?.node_type === 'floor'
+        ? { floor_id: selectedNode.value.id }
+        : {}
+    )
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onRevealAccessCode(room: RoomOut): Promise<void> {
+  try {
+    const data = await revealRoomAccessCode(room.id)
+    if (data.access_code == null) {
+      ElMessage.info('该房间未设置门禁密码')
+      return
+    }
+    await ElMessageBox.alert(`门禁密码：${data.access_code}`, '门禁密码（请勿外传）', {
+      confirmButtonText: '关闭',
+    })
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onEditAccessCode(room: RoomOut): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请输入门禁密码（字符串，可含前导零；留空表示清除）',
+      `设置门禁密码 - ${room.room_no}`,
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputType: 'password',
+        inputValue: '',
+      }
+    )
+    await setRoomAccessCode(room.id, value === '' ? null : value)
+    ElMessage.success('门禁密码已更新')
+    await loadRooms(
+      selectedNode.value?.node_type === 'floor'
+        ? { floor_id: selectedNode.value.id }
+        : {}
+    )
+  } catch (error) {
+    if (error !== 'cancel') notifyError(error)
+  }
+}
+
+// ---- FEAT-002 remediation: room type dictionary + room Excel import UI ----
+const roomTypes = ref<RoomTypeRow[]>([])
+const roomTypesDialogVisible = ref(false)
+const roomTypesLoading = ref(false)
+const roomTypeDialogVisible = ref(false)
+const roomTypeEditingId = ref<number | null>(null)
+const roomTypeForm = reactive({
+  type_code: '',
+  type_name: '',
+  default_capacity: 4,
+  description: '',
+  status: 'active',
+})
+
+const roomImportDialogVisible = ref(false)
+const roomImportFile = ref<File | null>(null)
+const roomImportRows = ref<ImportRow[]>([])
+const roomImportSummary = ref<{ total?: number; create?: number; error?: number; created?: number; failed?: number } | null>(null)
+const roomImportLoading = ref(false)
+const roomImportPhase = ref<'idle' | 'preview' | 'done'>('idle')
+
+async function loadRoomTypes(): Promise<void> {
+  roomTypesLoading.value = true
+  try {
+    roomTypes.value = (await listRoomTypes()) as RoomTypeRow[]
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    roomTypesLoading.value = false
+  }
+}
+
+function openRoomTypes(): void {
+  roomTypesDialogVisible.value = true
+  void loadRoomTypes()
+}
+
+function openRoomTypeCreate(): void {
+  roomTypeEditingId.value = null
+  Object.assign(roomTypeForm, {
+    type_code: '',
+    type_name: '',
+    default_capacity: 4,
+    description: '',
+    status: 'active',
+  })
+  roomTypeDialogVisible.value = true
+}
+
+function openRoomTypeEdit(row: RoomTypeRow): void {
+  roomTypeEditingId.value = row.id
+  Object.assign(roomTypeForm, {
+    type_code: row.type_code,
+    type_name: row.type_name,
+    default_capacity: row.default_capacity,
+    description: row.description ?? '',
+    status: row.status,
+  })
+  roomTypeDialogVisible.value = true
+}
+
+async function onRoomTypeSubmit(): Promise<void> {
+  if (!roomTypeForm.type_code.trim() || !roomTypeForm.type_name.trim()) {
+    ElMessage.warning('请填写类型编码和名称')
+    return
+  }
+  try {
+    if (roomTypeEditingId.value == null) {
+      await createRoomType({
+        type_code: roomTypeForm.type_code.trim(),
+        type_name: roomTypeForm.type_name.trim(),
+        default_capacity: roomTypeForm.default_capacity,
+        description: roomTypeForm.description || null,
+        status: roomTypeForm.status,
+      })
+      ElMessage.success('房型已创建')
+    } else {
+      await updateRoomType(roomTypeEditingId.value, {
+        type_name: roomTypeForm.type_name.trim(),
+        default_capacity: roomTypeForm.default_capacity,
+        description: roomTypeForm.description || null,
+        status: roomTypeForm.status,
+      })
+      ElMessage.success('房型已更新（不会自动修改已有房间容量）')
+    }
+    roomTypeDialogVisible.value = false
+    await loadRoomTypes()
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onRoomTypeDelete(row: RoomTypeRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除房型「${row.type_name}」吗？已被房间引用时只能停用。`,
+      '二次确认删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteRoomType(row.id)
+    ElMessage.success('房型已删除')
+    await loadRoomTypes()
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onRoomTypeDisable(row: RoomTypeRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确定停用房型「${row.type_name}」吗？已有房间容量不受影响。`, '停用房型', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await disableRoomType(row.id)
+    ElMessage.success('房型已停用')
+    await loadRoomTypes()
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+function openRoomImport(): void {
+  roomImportDialogVisible.value = true
+  roomImportFile.value = null
+  roomImportRows.value = []
+  roomImportSummary.value = null
+  roomImportPhase.value = 'idle'
+}
+
+function onRoomImportUploadChange(uploadFile: { raw?: File }): void {
+  if (uploadFile?.raw) onRoomImportFileChange(uploadFile.raw)
+}
+
+function onRoomImportFileChange(file: File): void {
+  roomImportFile.value = file
+  roomImportRows.value = []
+  roomImportSummary.value = null
+  roomImportPhase.value = 'idle'
+}
+
+async function onDownloadRoomTemplate(): Promise<void> {
+  try {
+    const blob = await downloadRoomImportTemplate()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'room_import_template.xlsx'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+async function onRoomImportPreview(): Promise<void> {
+  if (!roomImportFile.value) {
+    ElMessage.warning('请先选择 Excel 文件')
+    return
+  }
+  roomImportLoading.value = true
+  try {
+    const data = (await previewRoomImport(roomImportFile.value)) as {
+      rows: ImportRow[]
+      summary: Record<string, number>
+    }
+    roomImportRows.value = data.rows
+    roomImportSummary.value = data.summary
+    roomImportPhase.value = 'preview'
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    roomImportLoading.value = false
+  }
+}
+
+async function onRoomImportCommit(): Promise<void> {
+  if (!roomImportFile.value) {
+    ElMessage.warning('请先选择 Excel 文件')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('确认提交房间导入吗？已存在房间不会被覆盖。', '确认导入', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  roomImportLoading.value = true
+  try {
+    const data = (await commitRoomImport(roomImportFile.value)) as {
+      rows: ImportRow[]
+      summary: { created: number; failed: number; total: number }
+    }
+    roomImportRows.value = data.rows
+    roomImportSummary.value = data.summary
+    roomImportPhase.value = 'done'
+    ElMessage.success(`导入完成：成功 ${data.summary.created}，失败 ${data.summary.failed}`)
+    await loadTree()
+  } catch (error) {
+    notifyError(error)
+  } finally {
+    roomImportLoading.value = false
   }
 }
 
 onMounted(async () => {
   await loadTree()
   await loadRooms({})
+  await loadRoomTypes()
 })
 </script>
 
@@ -545,6 +932,29 @@ onMounted(async () => {
           >
             编辑楼栋
           </el-button>
+          <el-button
+            v-if="auth.hasPermission('dorm:update') && selectedNode?.node_type === 'floor'"
+            size="small"
+            @click="selectedNode && openFloorEdit(selectedNode)"
+          >
+            编辑楼层
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('dorm:update') && selectedNode?.node_type === 'room'"
+            size="small"
+            @click="selectedNode && openRoomEditFromNode(selectedNode)"
+          >
+            编辑房间
+          </el-button>
+
+            <el-button
+              v-if="auth.hasPermission('dorm:update') && selectedNode"
+              type="danger"
+              size="small"
+              @click="onDeleteNode(selectedNode)"
+            >
+              删除节点
+            </el-button>
         </div>
       </el-card>
     </el-col>
@@ -568,6 +978,18 @@ onMounted(async () => {
           </el-button>
           <div class="spacer" />
           <el-button
+            v-if="auth.hasPermission('dorm:view')"
+            @click="openRoomTypes"
+          >
+            房型维护
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('dorm:create')"
+            @click="openRoomImport"
+          >
+            批量导入
+          </el-button>
+          <el-button
             v-if="auth.hasPermission('dorm:create')"
             type="primary"
             @click="openRoomCreate"
@@ -578,7 +1000,11 @@ onMounted(async () => {
 
         <el-table :data="rooms" v-loading="roomsLoading" stripe>
           <el-table-column prop="room_no" label="房间号" width="100" />
-          <el-table-column prop="room_type" label="类型" width="100" />
+          <el-table-column label="类型" width="110">
+            <template #default="{ row }">
+              {{ roomTypes.find((t) => t.type_code === row.room_type)?.type_name || row.room_type }}
+            </template>
+          </el-table-column>
           <el-table-column label="容量" width="80">
             <template #default="{ row }">{{ row.capacity }}</template>
           </el-table-column>
@@ -599,7 +1025,7 @@ onMounted(async () => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150" fixed="right">
+          <el-table-column label="操作" width="260" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openBeds(row)">床位</el-button>
               <el-button
@@ -609,6 +1035,30 @@ onMounted(async () => {
                 @click="openRoomEdit(row)"
               >
                 编辑
+              </el-button>
+              <el-button
+                v-if="auth.hasPermission('dorm:access_code:view')"
+                link
+                type="warning"
+                @click="onRevealAccessCode(row)"
+              >
+                门禁
+              </el-button>
+              <el-button
+                v-if="auth.hasPermission('dorm:access_code:update')"
+                link
+                type="warning"
+                @click="onEditAccessCode(row)"
+              >
+                设密
+              </el-button>
+              <el-button
+                v-if="auth.hasPermission('dorm:update')"
+                link
+                type="danger"
+                @click="onDeleteRoom(row)"
+              >
+                删除
               </el-button>
             </template>
           </el-table-column>
@@ -686,7 +1136,7 @@ onMounted(async () => {
   </el-dialog>
 
   <!-- Floor -->
-  <el-dialog v-model="floorDialogVisible" title="新建楼层" width="480px">
+  <el-dialog v-model="floorDialogVisible" :title="floorEditingId == null ? '新建楼层' : '编辑楼层'" width="480px">
     <el-form ref="floorFormRef" :model="floorForm" :rules="floorRules" label-width="96px">
       <el-form-item label="楼层号" prop="floor_no">
         <el-input-number v-model="floorForm.floor_no" :min="-5" :max="200" />
@@ -714,10 +1164,17 @@ onMounted(async () => {
       </el-form-item>
       <el-form-item label="房间类型">
         <el-select v-model="roomForm.room_type" style="width: 100%">
-          <el-option label="标准" value="standard" />
-          <el-option label="单人间" value="single" />
-          <el-option label="双人间" value="double" />
-          <el-option label="家庭房" value="family" />
+          <el-option
+            v-for="t in roomTypes.filter((x) => x.status === 'active')"
+            :key="t.type_code"
+            :label="t.type_name"
+            :value="t.type_code"
+          />
+          <el-option
+            v-if="!roomTypes.some((x) => x.type_code === roomForm.room_type)"
+            :label="roomForm.room_type"
+            :value="roomForm.room_type"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="核定容量" prop="capacity">
@@ -774,8 +1231,10 @@ onMounted(async () => {
       <el-table-column prop="description" label="备注" min-width="120">
         <template #default="{ row }">{{ row.description || '—' }}</template>
       </el-table-column>
-      <el-table-column v-if="auth.hasPermission('bed:manage')" label="操作" width="200" fixed="right">
+      <el-table-column v-if="auth.hasPermission('bed:manage')" label="操作" width="280" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click="openBedEdit(row)">编辑</el-button>
+          <el-button link type="danger" @click="onDeleteBed(row)">删除</el-button>
           <el-button
             v-if="row.operational_status !== 'active'"
             link
@@ -806,7 +1265,7 @@ onMounted(async () => {
   </el-dialog>
 
   <!-- Bed create -->
-  <el-dialog v-model="bedCreateDialogVisible" title="新增床位" width="420px" append-to-body>
+  <el-dialog v-model="bedCreateDialogVisible" :title="bedEditingId == null ? '新增床位' : '编辑床位'" width="420px" append-to-body>
     <el-form ref="bedFormRef" :model="bedForm" :rules="bedRules" label-width="96px">
       <el-form-item label="床位号" prop="bed_no">
         <el-input v-model="bedForm.bed_no" />
@@ -826,6 +1285,149 @@ onMounted(async () => {
       <el-button @click="bedCreateDialogVisible = false">取消</el-button>
       <el-button type="primary" @click="onBedSubmit">保存</el-button>
     </template>
+  </el-dialog>
+
+  <!-- FEAT-002: room type dictionary -->
+  <el-dialog v-model="roomTypesDialogVisible" title="房型维护" width="720px">
+    <div class="toolbar">
+      <el-button
+        v-if="auth.hasPermission('dorm:create')"
+        type="primary"
+        size="small"
+        @click="openRoomTypeCreate"
+      >
+        新建房型
+      </el-button>
+    </div>
+    <el-table :data="roomTypes" v-loading="roomTypesLoading" stripe>
+      <el-table-column prop="type_code" label="编码" width="120" />
+      <el-table-column prop="type_name" label="名称" width="140" />
+      <el-table-column prop="default_capacity" label="默认容量" width="100" />
+      <el-table-column prop="description" label="备注" min-width="140" />
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }">
+          <el-tag :type="row.status === 'active' ? 'success' : 'info'">
+            {{ row.status === 'active' ? '启用' : '停用' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="160">
+        <template #default="{ row }">
+          <el-button
+            v-if="auth.hasPermission('dorm:update')"
+            link
+            type="primary"
+            @click="openRoomTypeEdit(row)"
+          >
+            编辑
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('dorm:update') && row.status === 'active'"
+            link
+            type="danger"
+            @click="onRoomTypeDisable(row)"
+          >
+            停用
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('dorm:update')"
+            link
+            type="danger"
+            @click="onRoomTypeDelete(row)"
+          >
+            删除
+          </el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
+
+  <el-dialog v-model="roomTypeDialogVisible" :title="roomTypeEditingId == null ? '新建房型' : '编辑房型'" width="480px">
+    <el-form label-width="110px">
+      <el-form-item label="类型编码" required>
+        <el-input v-model="roomTypeForm.type_code" :disabled="roomTypeEditingId != null" maxlength="32" />
+      </el-form-item>
+      <el-form-item label="类型名称" required>
+        <el-input v-model="roomTypeForm.type_name" maxlength="64" />
+      </el-form-item>
+      <el-form-item label="默认容量">
+        <el-input-number v-model="roomTypeForm.default_capacity" :min="1" :max="20" />
+        <div class="form-tip">仅用于新建房间预填，不会自动修改已有房间容量</div>
+      </el-form-item>
+      <el-form-item label="备注">
+        <el-input v-model="roomTypeForm.description" type="textarea" :rows="2" maxlength="2000" />
+      </el-form-item>
+      <el-form-item label="状态">
+        <el-switch v-model="roomTypeForm.status" active-value="active" inactive-value="disabled" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="roomTypeDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="onRoomTypeSubmit">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- FEAT-002: room Excel import -->
+  <el-dialog v-model="roomImportDialogVisible" title="房间批量导入" width="860px">
+    <div class="toolbar">
+      <el-button size="small" @click="onDownloadRoomTemplate">下载模板</el-button>
+      <el-upload
+        :auto-upload="false"
+        :limit="1"
+        :on-change="onRoomImportUploadChange"
+        :show-file-list="false"
+        accept=".xlsx,.xlsm"
+      >
+        <el-button size="small">选择 Excel</el-button>
+      </el-upload>
+      <el-button
+        type="primary"
+        size="small"
+        :loading="roomImportLoading"
+        :disabled="!roomImportFile"
+        @click="onRoomImportPreview"
+      >
+        上传预览
+      </el-button>
+      <el-button
+        type="success"
+        size="small"
+        :loading="roomImportLoading"
+        :disabled="roomImportPhase !== 'preview'"
+        @click="onRoomImportCommit"
+      >
+        确认提交
+      </el-button>
+    </div>
+    <el-alert
+      v-if="roomImportSummary"
+      type="info"
+      :closable="false"
+      style="margin-bottom: 12px"
+      :title="`总计 ${roomImportSummary.total ?? 0} 行 · 待创建 ${roomImportSummary.create ?? 0} · 错误 ${roomImportSummary.error ?? 0}` + (roomImportPhase === 'done' ? ` · 已创建 ${roomImportSummary.created ?? 0} · 失败 ${roomImportSummary.failed ?? 0}` : '')"
+    />
+    <el-table :data="roomImportRows" stripe max-height="360">
+      <el-table-column prop="row" label="行号" width="70" />
+      <el-table-column label="结果" width="90">
+        <template #default="{ row }">
+          <el-tag :type="row.action === 'create' ? 'success' : row.action === 'error' ? 'danger' : 'info'">
+            {{ row.action === 'create' ? '待创建' : row.action === 'error' ? '错误' : row.action }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="message" label="说明" min-width="220" />
+      <el-table-column label="房间号" width="100">
+        <template #default="{ row }">{{ (row.data as Record<string, unknown>)?.room_no }}</template>
+      </el-table-column>
+      <el-table-column label="容量" width="80">
+        <template #default="{ row }">{{ (row.data as Record<string, unknown>)?.capacity }}</template>
+      </el-table-column>
+      <el-table-column label="门禁密码" width="110">
+        <template #default="{ row }">
+          {{ (row.data as Record<string, unknown>)?.access_code ? '已填写' : '—' }}
+        </template>
+      </el-table-column>
+    </el-table>
   </el-dialog>
 </template>
 

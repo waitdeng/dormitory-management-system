@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
   cancelTransfer,
   completeTransfer,
@@ -45,6 +45,24 @@ const statusLabel: Record<string, string> = {
   cancelled: '已取消',
 }
 
+function formatBedPath(bed: {
+  area_name?: string | null
+  building_name?: string | null
+  floor_no?: number | null
+  room_no?: string | null
+  bed_no: string
+}): string {
+  return [
+    bed.area_name,
+    bed.building_name,
+    bed.floor_no != null ? `${bed.floor_no}F` : null,
+    bed.room_no,
+    bed.bed_no,
+  ]
+    .filter((p): p is string => p != null && p !== '')
+    .join('/')
+}
+
 function canReserve(row: TransferRecordOut): boolean {
   return ['pending', 'reserved'].includes(row.status) && auth.hasPermission('transfer:create')
 }
@@ -67,7 +85,7 @@ async function load(): Promise<void> {
     rows.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -94,7 +112,7 @@ async function onSubmit(): Promise<void> {
       createVisible.value = false
       await load()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -105,7 +123,7 @@ async function onReserve(row: TransferRecordOut): Promise<void> {
     ElMessage.success('目标床位已预留')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -115,7 +133,7 @@ async function onComplete(row: TransferRecordOut): Promise<void> {
     ElMessage.success('调宿已完成')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -125,14 +143,19 @@ async function onCancel(row: TransferRecordOut): Promise<void> {
     ElMessage.success('已取消')
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
 onMounted(async () => {
   await load()
   try {
-    const data = await listEmployees({ page: 1, page_size: 100 })
+    // only currently housed employees can transfer
+    const data = await listEmployees({
+      page: 1,
+      page_size: 100,
+      accommodation_status: 'in_dorm',
+    })
     employees.value = data.items
     beds.value = await listAvailableBeds({ limit: 200 })
   } catch {
@@ -173,7 +196,7 @@ onMounted(async () => {
       <el-table-column label="原床位" min-width="130">
         <template #default="{ row }">
           <span v-if="row.source_bed">
-            {{ row.source_bed.building_name }}/{{ row.source_bed.room_no }}/{{ row.source_bed.bed_no }}
+            {{ formatBedPath(row.source_bed) }}
           </span>
           <span v-else>{{ row.source_bed_id }}</span>
         </template>
@@ -181,7 +204,7 @@ onMounted(async () => {
       <el-table-column label="目标床位" min-width="130">
         <template #default="{ row }">
           <span v-if="row.target_bed">
-            {{ row.target_bed.building_name }}/{{ row.target_bed.room_no }}/{{ row.target_bed.bed_no }}
+            {{ formatBedPath(row.target_bed) }}
           </span>
           <span v-else>{{ row.target_bed_id }}</span>
         </template>
@@ -230,7 +253,7 @@ onMounted(async () => {
             <el-option
               v-for="b in beds"
               :key="b.id"
-              :label="`床 ${b.bed_no} (房间 ${b.room_id})`"
+              :label="b.bed_path || [b.area_name, b.building_name, b.floor_no != null ? `${b.floor_no}F` : null, b.room_no, b.bed_no].filter(Boolean).join('/')"
               :value="b.id"
             />
           </el-select>

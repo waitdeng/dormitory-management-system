@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, DbSession, get_request_id, require_permission
-from app.core.permissions import PERM_BED_MANAGE, PERM_DORM_CREATE, PERM_DORM_UPDATE, PERM_DORM_VIEW
+from app.core.permissions import (
+    PERM_BED_MANAGE,
+    PERM_DORM_ACCESS_CODE_ROTATE,
+    PERM_DORM_ACCESS_CODE_UPDATE,
+    PERM_DORM_ACCESS_CODE_VIEW,
+    PERM_DORM_CREATE,
+    PERM_DORM_UPDATE,
+    PERM_DORM_VIEW,
+)
 from app.schemas.common import PageEnvelope
 from app.schemas.dorm import (
     BedCreate,
@@ -23,11 +33,15 @@ from app.schemas.dorm import (
     FloorCreate,
     FloorOut,
     FloorUpdate,
+    RoomAccessCodeOut,
     RoomCreate,
     RoomOut,
+    RoomTypeCreate,
+    RoomTypeOut,
+    RoomTypeUpdate,
     RoomUpdate,
 )
-from app.services import dorm_service
+from app.services import dorm_import_service, dorm_service
 
 router = APIRouter(tags=["dormitories"])
 
@@ -35,6 +49,15 @@ ViewDorm = Annotated[CurrentUser, Depends(require_permission(PERM_DORM_VIEW))]
 CreateDorm = Annotated[CurrentUser, Depends(require_permission(PERM_DORM_CREATE))]
 UpdateDorm = Annotated[CurrentUser, Depends(require_permission(PERM_DORM_UPDATE))]
 ManageBed = Annotated[CurrentUser, Depends(require_permission(PERM_BED_MANAGE))]
+ViewAccessCode = Annotated[
+    CurrentUser, Depends(require_permission(PERM_DORM_ACCESS_CODE_VIEW))
+]
+UpdateAccessCode = Annotated[
+    CurrentUser, Depends(require_permission(PERM_DORM_ACCESS_CODE_UPDATE))
+]
+RotateAccessCodeKeys = Annotated[
+    CurrentUser, Depends(require_permission(PERM_DORM_ACCESS_CODE_ROTATE))
+]
 
 
 # ---- Areas ----
@@ -376,3 +399,258 @@ async def dorm_tree(
     include_disabled: bool = Query(False),
 ) -> list[DormTreeNode]:
     return await dorm_service.dorm_tree(db, include_disabled=include_disabled)
+
+# ---- FEAT-008: room door access code ----
+
+
+class AccessCodeIn(BaseModel):
+    """Door access code as string — preserves leading zeros."""
+
+    access_code: str | None = Field(default=None, max_length=64)
+
+
+@router.get("/rooms/{room_id}/access-code", response_model=RoomAccessCodeOut)
+async def reveal_room_access_code(
+    room_id: int,
+    request: Request,
+    db: DbSession,
+    guard: ViewAccessCode,
+) -> RoomAccessCodeOut:
+    """Reveal plaintext door access code. Permission-gated and audited."""
+    data = await dorm_service.reveal_room_access_code(
+        db, room_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+    return RoomAccessCodeOut(**data)
+
+
+@router.put("/rooms/{room_id}/access-code", response_model=RoomOut)
+async def set_room_access_code(
+    room_id: int,
+    payload: AccessCodeIn,
+    request: Request,
+    db: DbSession,
+    guard: UpdateAccessCode,
+) -> RoomOut:
+    """Set or clear the door access code (string; leading zeros preserved)."""
+    data = await dorm_service.set_room_access_code(
+        db,
+        room_id,
+        payload.access_code,
+        actor_user_id=guard.id,
+        request_id=get_request_id(request),
+    )
+    return RoomOut(**data)
+
+
+# ---- FEAT-002: room types ----
+
+
+@router.get("/room-types", response_model=list[RoomTypeOut])
+async def list_room_types(
+    db: DbSession,
+    _guard: ViewDorm,
+    include_disabled: bool = Query(True),
+) -> list[RoomTypeOut]:
+    rows = await dorm_service.list_room_types(db, include_disabled=include_disabled)
+    return [RoomTypeOut(**r) for r in rows]
+
+
+@router.post("/room-types", response_model=RoomTypeOut, status_code=201)
+async def create_room_type(
+    payload: RoomTypeCreate,
+    request: Request,
+    db: DbSession,
+    guard: CreateDorm,
+) -> RoomTypeOut:
+    data = await dorm_service.create_room_type(
+        db, payload, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+    return RoomTypeOut(**data)
+
+
+@router.patch("/room-types/{type_id}", response_model=RoomTypeOut)
+async def update_room_type(
+    type_id: int,
+    payload: RoomTypeUpdate,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+) -> RoomTypeOut:
+    data = await dorm_service.update_room_type(
+        db, type_id, payload, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+    return RoomTypeOut(**data)
+
+
+@router.post("/room-types/{type_id}/disable", response_model=RoomTypeOut)
+async def disable_room_type(
+    type_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+) -> RoomTypeOut:
+    data = await dorm_service.disable_room_type(
+        db, type_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+    return RoomTypeOut(**data)
+
+
+# ---- BUG-001: safe delete (no business refs / no children) ----
+
+
+@router.delete("/beds/{bed_id}")
+async def delete_bed(
+    bed_id: int,
+    request: Request,
+    db: DbSession,
+    guard: ManageBed,
+):
+    return await dorm_service.delete_bed(
+        db, bed_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+@router.delete("/rooms/{room_id}")
+async def delete_room(
+    room_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+):
+    return await dorm_service.delete_room(
+        db, room_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+@router.delete("/floors/{floor_id}")
+async def delete_floor(
+    floor_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+):
+    return await dorm_service.delete_floor(
+        db, floor_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+@router.delete("/buildings/{building_id}")
+async def delete_building(
+    building_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+):
+    return await dorm_service.delete_building(
+        db, building_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+@router.delete("/dorm-areas/{area_id}")
+async def delete_area(
+    area_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+):
+    return await dorm_service.delete_area(
+        db, area_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+# ---- FEAT-002: room Excel import ----
+
+
+@router.get("/rooms/import/template")
+async def room_import_template(db: DbSession, _guard: CreateDorm):
+    content = dorm_import_service.build_room_import_template()
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="room_import_template.xlsx"'},
+    )
+
+
+@router.post("/rooms/import/preview")
+async def room_import_preview(
+    db: DbSession,
+    _guard: CreateDorm,
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    return await dorm_import_service.preview_room_import(db, content)
+
+
+@router.post("/rooms/import/commit")
+async def room_import_commit(
+    request: Request,
+    db: DbSession,
+    guard: CreateDorm,
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    return await dorm_import_service.commit_room_import(
+        db, content, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+
+# ---- UX-004: batch bed allocation Excel import ----
+
+
+@router.get("/allocations/import/template")
+async def alloc_import_template(db: DbSession, _guard: ManageBed):
+    content = dorm_import_service.build_alloc_import_template()
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="allocation_import_template.xlsx"'},
+    )
+
+
+@router.post("/allocations/import/preview")
+async def alloc_import_preview(
+    db: DbSession,
+    _guard: ManageBed,
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    return await dorm_import_service.preview_alloc_import(db, content)
+
+
+@router.post("/allocations/import/commit")
+async def alloc_import_commit(
+    request: Request,
+    db: DbSession,
+    guard: ManageBed,
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    return await dorm_import_service.commit_alloc_import(
+        db, content, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+@router.post("/rooms/access-code/rotate")
+async def rotate_access_code_keys(
+    request: Request,
+    db: DbSession,
+    guard: RotateAccessCodeKeys,
+):
+    """Global key rotation. Super admin / secrets_ops only — NOT dorm_admin.
+
+    Re-encrypts all access codes under the current primary key. Never logs plaintext.
+    """
+    return await dorm_service.migrate_access_code_keys(
+        db, actor_user_id=guard.id, request_id=get_request_id(request)
+    )
+
+@router.delete("/room-types/{type_id}")
+async def delete_room_type(
+    type_id: int,
+    request: Request,
+    db: DbSession,
+    guard: UpdateDorm,
+):
+    """FIX-010: hard-delete only when unused; referenced types must be disabled."""
+    return await dorm_service.delete_room_type(
+        db, type_id, actor_user_id=guard.id, request_id=get_request_id(request)
+    )

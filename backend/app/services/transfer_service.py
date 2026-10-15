@@ -143,14 +143,18 @@ async def get_transfer(db: AsyncSession, transfer_id: int) -> dict:
             "id": src["bed"].id,
             "bed_no": src["bed"].bed_no,
             "room_no": src["room"].room_no,
+            "floor_no": src["floor"].floor_no,
             "building_name": src["building"].building_name,
+            "area_name": src["area"].area_name,
         }
         tgt = await occ.load_bed_chain(db, tr.target_bed_id)
         data["target_bed"] = {
             "id": tgt["bed"].id,
             "bed_no": tgt["bed"].bed_no,
             "room_no": tgt["room"].room_no,
+            "floor_no": tgt["floor"].floor_no,
             "building_name": tgt["building"].building_name,
+            "area_name": tgt["area"].area_name,
         }
     except BusinessRuleError:
         pass
@@ -180,6 +184,7 @@ async def create_transfer(
             return await get_transfer(db, existing.id)
 
     emp = await occ.lock_employee(db, employee_id)
+    occ.assert_accommodation_required(emp)
     src = await occ.active_accommodation_for_employee(db, employee_id, for_update=True)
     if src is None:
         raise BusinessRuleError("Employee has no active accommodation to transfer from")
@@ -255,6 +260,7 @@ async def reserve_target(
         raise ValidationError("Transfer target bed must differ from the source bed")
 
     emp = await occ.lock_employee(db, tr.employee_id)
+    occ.assert_accommodation_required(emp)
     await occ.lock_beds(db, [tr.source_bed_id, bed_id])
     chain = await occ.load_bed_chain(db, bed_id)
     occ.assert_hierarchy_allocatable(chain)
@@ -338,6 +344,7 @@ async def complete_transfer(
         )
 
     emp = await occ.lock_employee(db, tr.employee_id)
+    occ.assert_accommodation_required(emp)
     await occ.lock_beds(db, [tr.source_bed_id, tr.target_bed_id])
 
     src = (

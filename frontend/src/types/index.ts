@@ -328,6 +328,8 @@ export interface RoomOut {
   description: string | null
   bed_count: number
   active_bed_count: number
+  /** FEAT-008: plaintext never returned in list/detail */
+  has_access_code?: boolean
   created_at: string | null
   updated_at: string | null
 }
@@ -364,6 +366,12 @@ export interface BedOut {
   occupied: boolean
   reserved: boolean
   available: boolean
+  /** Full location path fields (BUG-005) */
+  area_name?: string | null
+  building_name?: string | null
+  floor_no?: number | null
+  room_no?: string | null
+  bed_path?: string | null
   created_at: string | null
   updated_at: string | null
 }
@@ -409,8 +417,10 @@ export interface CheckinApplicationOut {
     id: number
     bed_no: string
     room_no: string
+    floor_no?: number | null
     building_name: string
     area_name: string
+    bed_path?: string | null
   } | null
   reservation?: BedReservationOut | null
   accommodation?: AccommodationRecordOut | null

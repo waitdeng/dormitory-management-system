@@ -135,3 +135,16 @@ M3 边界（不做 M4/M5）：不建 `employee_status_events` / `workflow_todos`
 - 可视化分床：楼层 room-cards、房间/床位五态、分配冲突 409 提示
 - 前端：Dashboard 图表、BedAllocationView、ReportsView
 - 测试：后端 15 项 M5（P0 数据隔离 4 + 报表 6 + 分床 5）、Vitest 4、Playwright 3
+
+## V1.0.1 HOTFIX 状态（2026-10-15）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| V1.0.1 BUG-001～FEAT-008 | 已完成 | 见 `V1_0_1_FIX_REPORT.md` / 补强/安全报告 |
+| HOTFIX-04/05/06/07A | 已完成 | 含 UX/BUG 修复与预留过期状态同步 |
+| HOTFIX-07A 根因修复 | **保留** | 预留过期同步 reserved→approved + 锁序统一 |
+| **HOTFIX-07B 历史数据修复** | **已取消（用户决定）** | 开发测试数据不迁生产；不批量修复 C1/C5 |
+| 调宿锁序风险 | 记录中 | 正式验收前专项测试（见 07B 报告 §3） |
+| 下一步 | 全新库部署演练 + 全业务流程 + 最终验收 | **不**自行宣布 V1.0.1 发布 |
+
+正式部署策略：生产从**空库** Alembic 初始化 + RBAC seed + 真实资料录入，**不迁移**开发测试数据。

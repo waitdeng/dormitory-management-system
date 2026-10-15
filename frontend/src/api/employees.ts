@@ -16,6 +16,7 @@ export async function listEmployees(params: {
   department_id?: number
   employment_status?: string
   accommodation_status?: string
+  accommodation_required?: boolean
 }): Promise<PageEnvelope<EmployeeOut>> {
   const { data } = await http.get<PageEnvelope<EmployeeOut>>('/api/v1/employees', { params })
   return data

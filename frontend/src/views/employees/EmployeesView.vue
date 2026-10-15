@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules, type UploadFile } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { extractError } from '@/api/client'
+import { notifyError } from '@/api/client'
 import {
   commitEmployeeImport,
   createEmployee,
@@ -112,20 +112,20 @@ const shiftOptions = [
 const statusOptions = [
   { label: '待入职', value: 'pending' },
   { label: '在职', value: 'active' },
-  { label: '试用', value: 'probation' },
+  { label: '试用期', value: 'probation' },
   { label: '离职办理中', value: 'offboarding' },
   { label: '已离职', value: 'terminated' },
-  { label: '离职', value: 'resigned' },
+  { label: '已离职', value: 'resigned' },
   { label: '停职', value: 'suspended' },
 ]
 
 const statusLabel: Record<string, string> = {
   pending: '待入职',
   active: '在职',
-  probation: '试用',
+  probation: '试用期',
   offboarding: '离职办理中',
   terminated: '已离职',
-  resigned: '离职',
+  resigned: '已离职',
   suspended: '停职',
 }
 
@@ -142,7 +142,7 @@ async function load(): Promise<void> {
     rows.value = data.items
     total.value = data.total
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     loading.value = false
   }
@@ -212,7 +212,7 @@ async function onOffboard(row: EmployeeOut): Promise<void> {
     )
     await load()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(extractError(error))
+    if (error !== 'cancel') notifyError(error)
   }
 }
 
@@ -230,7 +230,7 @@ async function onTerminate(row: EmployeeOut): Promise<void> {
     )
     await load()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(extractError(error))
+    if (error !== 'cancel') notifyError(error)
   }
 }
 
@@ -263,7 +263,7 @@ async function onSubmit(): Promise<void> {
       dialogVisible.value = false
       await load()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }
@@ -282,7 +282,7 @@ async function onExport(): Promise<void> {
     a.click()
     URL.revokeObjectURL(url)
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -296,7 +296,7 @@ async function onDownloadTemplate(): Promise<void> {
     a.click()
     URL.revokeObjectURL(url)
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   }
 }
 
@@ -314,7 +314,7 @@ async function onImportPreview(): Promise<void> {
     importPreview.value = await previewEmployeeImport(importFile.value)
   } catch (error) {
     importPreview.value = null
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     importLoading.value = false
   }
@@ -333,7 +333,7 @@ async function onImportCommit(): Promise<void> {
     importFile.value = null
     await load()
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     importSubmitting.value = false
   }
@@ -351,7 +351,7 @@ async function loadDeptList(): Promise<void> {
     const data = await listDepartments({ page: 1, page_size: 100 })
     deptRows.value = data.items
   } catch (error) {
-    ElMessage.error(extractError(error))
+    notifyError(error)
   } finally {
     deptLoading.value = false
   }
@@ -401,7 +401,7 @@ async function onDeptSubmit(): Promise<void> {
       await loadDeptList()
       await loadDepartments()
     } catch (error) {
-      ElMessage.error(extractError(error))
+      notifyError(error)
     }
   })
 }

@@ -67,6 +67,69 @@ async def expire_reservations(
     return {"scanned": len(candidates), "expired": expired, "skipped": skipped}
 
 
+async def _sync_app_after_reservation_expiry(
+    db: AsyncSession,
+    *,
+    res: BedReservation,
+    actor_user_id: int | None,
+    request_id: str | None,
+) -> bool:
+    """HOTFIX-07A: reserved → approved when the reservation ends as expired.
+
+    Preconditions (caller holds employee + bed + reservation locks):
+      * application.status == 'reserved'
+      * application.assigned_bed_id == res.bed_id
+      * no active accommodation for this application
+      * employee has no active accommodation
+    """
+    if res.application_id is None:
+        return False
+    app = (
+        await db.execute(
+            select(AccommodationApplication)
+            .where(AccommodationApplication.id == res.application_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if app is None or app.status != "reserved":
+        return False
+    if app.assigned_bed_id != res.bed_id:
+        return False
+    app_acc = (
+        await db.execute(
+            select(AccommodationRecord).where(
+                AccommodationRecord.application_id == app.id,
+                AccommodationRecord.status == "active",
+            )
+        )
+    ).scalars().first()
+    if app_acc is not None:
+        return False
+    emp_acc = (
+        await db.execute(
+            select(AccommodationRecord).where(
+                AccommodationRecord.employee_id == app.employee_id,
+                AccommodationRecord.status == "active",
+            )
+        )
+    ).scalars().first()
+    if emp_acc is not None:
+        return False
+    before_status = app.status
+    app.status = "approved"
+    await audit_service.write_audit(
+        db,
+        action="application.reservation_expired_revert",
+        resource_type="accommodation_application",
+        resource_id=app.id,
+        actor_user_id=actor_user_id,
+        request_id=request_id,
+        before_data={"status": before_status, "assigned_bed_id": app.assigned_bed_id},
+        after_data={"status": app.status, "assigned_bed_id": app.assigned_bed_id},
+    )
+    return True
+
+
 async def _expire_one_reservation(
     db: AsyncSession,
     reservation_id: int,
@@ -132,12 +195,20 @@ async def _expire_one_reservation(
         res.status = "expired"
         res.released_at = now
         res.release_reason = "expired (bed occupied by another record)"
+        await _sync_app_after_reservation_expiry(
+            db, res=res, actor_user_id=actor_user_id, request_id=request_id
+        )
         await db.commit()
         return "skipped"
 
     res.status = "expired"
     res.released_at = now
     res.release_reason = res.release_reason or "expired automatically"
+
+    # HOTFIX-07A: sync application in the SAME transaction as reservation expiry.
+    await _sync_app_after_reservation_expiry(
+        db, res=res, actor_user_id=actor_user_id, request_id=request_id
+    )
 
     # Close any pending to-do bound to this reservation
     await wf.complete_todos_for_business(

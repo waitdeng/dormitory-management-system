@@ -49,10 +49,16 @@ function flushPending(token: string | null): void {
   pendingQueue = []
 }
 
+export type RequestConfigExtras = {
+  /** When true, the global interceptor will not toast — the caller owns messaging. */
+  skipErrorToast?: boolean
+  _retry?: boolean
+}
+
 http.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiError>) => {
-    const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const original = error.config as (InternalAxiosRequestConfig & RequestConfigExtras) | undefined
     const status = error.response?.status
 
     if (status === 401 && original && !original._retry) {
@@ -94,18 +100,77 @@ http.interceptors.response.use(
       }
     }
 
-    const apiError = error.response?.data
-    const message = apiError?.message || error.message || '请求失败'
-    if (status !== 401) {
+    const message = await extractErrorAsync(error)
+    const skipToast = original?.skipErrorToast === true
+    if (status !== 401 && !skipToast) {
       ElMessage.error(message)
+      markToasted(error)
     }
     return Promise.reject(error)
   },
 )
 
-export function extractError(error: unknown): string {
+type ToastedError = { __dmsToasted?: boolean }
+
+function markToasted(error: unknown): void {
+  if (typeof error === 'object' && error !== null) {
+    ;(error as ToastedError).__dmsToasted = true
+  }
+}
+
+export function wasToasted(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as ToastedError).__dmsToasted === true
+  )
+}
+
+/** Toast once per failure. If the global interceptor already notified, this is a no-op. */
+export function notifyError(error: unknown, fallback?: string): void {
+  if (wasToasted(error)) return
+  ElMessage.error(fallback ?? extractError(error))
+}
+
+function isApiErrorBody(value: unknown): value is ApiError {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as ApiError).message === 'string'
+  )
+}
+
+async function extractErrorAsync(error: unknown): Promise<string> {
   if (axios.isAxiosError(error)) {
-    return error.response?.data?.message || error.message
+    const data = error.response?.data
+    if (isApiErrorBody(data)) return data.message
+    // Blob / ArrayBuffer error bodies (export downloads)
+    if (data instanceof Blob) {
+      try {
+        const parsed = JSON.parse(await data.text())
+        if (isApiErrorBody(parsed)) return parsed.message
+      } catch {
+        /* fall through */
+      }
+    }
+    return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
+}
+
+export function extractError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data
+    if (isApiErrorBody(data)) return data.message
+    return error.message
+  }
+  return error instanceof Error ? error.message : '未知错误'
+}
+
+
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /** Skip the global error toast — caller owns messaging. */
+    skipErrorToast?: boolean
+  }
 }

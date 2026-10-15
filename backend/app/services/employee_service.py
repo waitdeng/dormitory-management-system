@@ -144,6 +144,7 @@ async def list_employees(
     department_id: int | None = None,
     employment_status: str | None = None,
     accommodation_status: str | None = None,
+    accommodation_required: bool | None = None,
     scope: DeptScope | None = None,
 ) -> tuple[list[dict], int]:
     from app.services.data_scope import apply_employee_scope
@@ -166,8 +167,35 @@ async def list_employees(
     if employment_status:
         query = query.where(Employee.employment_status == employment_status)
         count_query = count_query.where(Employee.employment_status == employment_status)
+    if accommodation_required is not None:
+        query = query.where(Employee.accommodation_required == accommodation_required)
+        count_query = count_query.where(
+            Employee.accommodation_required == accommodation_required
+        )
 
-    if accommodation_status:
+    # BUG-014: visual-allocation candidate set — strict eligibility
+    if accommodation_status == "allocatable":
+        from app.models.accommodation import AccommodationRecord, BedReservation
+
+        in_dorm = select(AccommodationRecord.employee_id).where(
+            AccommodationRecord.status == "active"
+        )
+        reserved = select(BedReservation.employee_id).where(
+            BedReservation.status == "active"
+        )
+        query = query.where(
+            Employee.employment_status == "active",
+            Employee.accommodation_required.is_(True),
+            ~Employee.id.in_(in_dorm),
+            ~Employee.id.in_(reserved),
+        )
+        count_query = count_query.where(
+            Employee.employment_status == "active",
+            Employee.accommodation_required.is_(True),
+            ~Employee.id.in_(in_dorm),
+            ~Employee.id.in_(reserved),
+        )
+    elif accommodation_status:
         from app.models.accommodation import AccommodationRecord, BedReservation
 
         if accommodation_status == "in_dorm":
@@ -319,6 +347,10 @@ async def update_employee(
     ):
         if field in data:
             setattr(emp, field, data[field])
+
+    # BUG-007: flipping accommodation_required to false must NOT auto-release
+    # an existing bed or delete the accommodation record. Checkout remains the
+    # only release path (AGENTS.md business invariant 5 / user requirement).
 
     _assert_dates(emp.join_date, emp.termination_date)
 
@@ -1099,10 +1131,12 @@ async def export_employees(
     }
     shift_rev = {"day": "白班", "night": "夜班", "rotating": "轮班", "none": "无"}
     status_rev = {
+        "pending": "待入职",
         "active": "在职",
-        "probation": "试用",
-        "resigned": "离职",
-        "terminated": "解雇",
+        "probation": "试用期",
+        "offboarding": "离职办理中",
+        "terminated": "已离职",
+        "resigned": "已离职",
         "suspended": "停职",
     }
 

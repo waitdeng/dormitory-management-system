@@ -190,13 +190,50 @@ async def assert_bed_free_for(
             raise ConflictError(f"Bed {bed_id} is already reserved for this employee")
 
 
+def assert_accommodation_required(emp: Employee) -> None:
+    """BUG-007/BUG-014: eligibility for new bed allocation.
+
+    Central guard for check-in application, bed reservation, confirmation,
+    transfer allocation and batch import. Frontend filtering is not sufficient.
+    """
+    if not emp.accommodation_required:
+        raise BusinessRuleError(
+            f"Employee {emp.employee_no} does not require accommodation "
+            f"and cannot be assigned a bed"
+        )
+
+
+def assert_eligible_for_new_checkin(emp: Employee) -> None:
+    """BUG-014: visual-allocation / new check-in eligibility.
+
+    Only employment_status=active may receive a NEW bed assignment.
+    Transfer of already-housed employees is intentionally not restricted here.
+    """
+    assert_accommodation_required(emp)
+    if emp.employment_status != "active":
+        raise BusinessRuleError(
+            f"Employee {emp.employee_no} employment_status="
+            f"'{emp.employment_status}' is not eligible for new bed allocation "
+            f"(only active)"
+        )
+
+
 async def assert_employee_available_for_checkin(
     db: AsyncSession,
     employee_id: int,
     *,
     ignore_accommodation_id: int | None = None,
+    employee: Employee | None = None,
 ) -> None:
-    """Employee must not already be actively housed (BR-003)."""
+    """Employee must not already be actively housed (BR-003) and must need housing."""
+    emp = employee
+    if emp is None:
+        emp = (
+            await db.execute(select(Employee).where(Employee.id == employee_id))
+        ).scalar_one_or_none()
+        if emp is None:
+            raise BusinessRuleError(f"Employee {employee_id} not found")
+    assert_accommodation_required(emp)
     occ = await active_accommodation_for_employee(db, employee_id, for_update=True)
     if occ is not None and occ.id != ignore_accommodation_id:
         raise ConflictError("Employee already has an active accommodation record")
